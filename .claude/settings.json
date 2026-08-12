@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -3 -c ' *)",
+      "Bash(tasklist //FI \"IMAGENAME eq python*\")",
+      "Bash(find \"/c/Users/user/Desktop\" -iname \"*.py\" 2>/dev/null | grep -v \"/tele/repo/\" ; echo \"---\"; find \"/c/Users/user\" -maxdepth 6 -iname \"main_tab.py\" 2>/dev/null)",
+      "Read(//c/Users/user/**)",
+      "Bash(taskkill //F //PID 3392)",
+      "Bash(py -3 -c \"import PyInstaller; print\\('pyinstaller', PyInstaller.__version__\\)\")",
+      "Bash(py -3 -m PyInstaller bot.spec --noconfirm --clean)"
+    ]
+  }
+}

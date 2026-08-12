@@ -1,0 +1,7 @@
+pywin32
+mss
+Pillow
+numpy
+keyboard
+opencv-python
+pyinstaller
