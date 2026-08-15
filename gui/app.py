@@ -32,7 +32,7 @@ def _is_admin() -> bool:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("MapleStory Bot")
+        self.root.title("Telegram Desktop")
         self.root.resizable(False, False)
         try:
             self.root.iconbitmap(_resource("app.ico"))
@@ -52,6 +52,11 @@ class App:
         notebook.add(self.main_tab, text="Main")
         notebook.add(self.timed_tab, text="Timed Actions")
         notebook.add(self.settings_tab, text="Settings")
+
+        root.update_idletasks()
+        width = max(200, root.winfo_width() - 60)
+        height = root.winfo_height()
+        root.geometry(f"{width}x{height}")
 
         root.bind("<F9>", lambda e: self._toggle())
 
