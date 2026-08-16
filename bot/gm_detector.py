@@ -18,6 +18,7 @@ class GMDetector:
         self.wm = wm
         self.threshold = threshold
         self.template = None
+        self.last_frame = None
 
         path = _resource_path(template_path)
         if os.path.exists(path):
@@ -43,6 +44,7 @@ class GMDetector:
         if frame is None:
             return False
 
+        self.last_frame = frame
         frame_bgr = np.ascontiguousarray(frame[:, :, :3])
         th, tw = self.template.shape[:2]
         if frame_bgr.shape[0] < th or frame_bgr.shape[1] < tw:

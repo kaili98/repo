@@ -43,6 +43,23 @@ class SettingsTab(ttk.Frame):
         row(repo_frame, "Facing R key:", "facing_r_key", str, 0, 2)
         row(repo_frame, "Check Interval (s):", "check_interval", float, 1, 0)
 
+        telegram_frame = tk.LabelFrame(self, text="Telegram Alert (kin.png detected)")
+        telegram_frame.pack(fill="x", padx=5, pady=5)
+
+        self._telegram_var = tk.BooleanVar(value=cfg.get("telegram_alert_enabled", True))
+        tk.Checkbutton(telegram_frame, text="Send screenshot to Telegram on detection", variable=self._telegram_var,
+                        command=lambda: self._save_bool("telegram_alert_enabled", self._telegram_var.get())
+                        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=5, pady=(3, 0))
+
+        tk.Label(telegram_frame, text="Bot Token:", anchor="e", width=16).grid(row=1, column=0, padx=5, pady=3, sticky="e")
+        self._telegram_token = tk.Entry(telegram_frame, width=40, show="*")
+        self._telegram_token.insert(0, str(cfg.get("telegram_token", "")))
+        self._telegram_token.grid(row=1, column=1, columnspan=3, padx=5, pady=3, sticky="w")
+        self._telegram_token.bind("<FocusOut>", lambda e: self._save_field("telegram_token", self._telegram_token.get()))
+
+        row(telegram_frame, "Chat ID:", "telegram_chat_id", str, 2, 0)
+        row(telegram_frame, "Cooldown (s):", "telegram_cooldown", float, 2, 2)
+
         input_frame = tk.LabelFrame(self, text="Input Method")
         input_frame.pack(fill="x", padx=5, pady=5)
         self._input_var = tk.StringVar(value=cfg.get("input_method", "sendinput"))
@@ -60,6 +77,16 @@ class SettingsTab(ttk.Frame):
             self.engine._apply_config()
         except (ValueError, TypeError):
             return
+
+    def _save_field(self, key: str, value: str):
+        self.config.set(key, value.strip())
+        self.config.save()
+        self.engine._apply_config()
+
+    def _save_bool(self, key: str, value: bool):
+        self.config.set(key, value)
+        self.config.save()
+        self.engine._apply_config()
 
     def _on_input_change(self):
         self.config.set("input_method", self._input_var.get())

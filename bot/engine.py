@@ -9,6 +9,7 @@ from bot.repositioner import Repositioner
 from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.alarm import Alarm
+from bot.telegram_notifier import TelegramNotifier
 
 GM_CHECK_INTERVAL = 2.0
 
@@ -31,6 +32,7 @@ class BotEngine:
         self.timed = TimedActionManager(self.inp)
         self.gm = GMDetector(self.window)
         self.alarm = Alarm()
+        self.telegram = TelegramNotifier()
         self.status = Status()
         self._thread = None
         self._stop_event = threading.Event()
@@ -67,6 +69,10 @@ class BotEngine:
             self.inp.hwnd = self.window.get_target()
 
         self.timed.actions = [TimedAction.from_dict(a) for a in cfg.get("timed_actions", [])]
+
+        self.telegram.token = cfg.get("telegram_token", "")
+        self.telegram.chat_id = cfg.get("telegram_chat_id", "")
+        self.telegram.cooldown = cfg.get("telegram_cooldown", 30.0)
 
     def start(self):
         if self.status.running:
@@ -118,9 +124,12 @@ class BotEngine:
 
                 if cfg.get("gm_alarm_enabled") and t0 - self._last_gm_check >= GM_CHECK_INTERVAL:
                     self._last_gm_check = t0
+                    was_detected = self.status.gm_detected
                     self.status.gm_detected = self.gm.check()
                     if self.status.gm_detected:
                         self.alarm.start()
+                        if not was_detected and cfg.get("telegram_alert_enabled"):
+                            self.telegram.notify_async(self.gm.last_frame, caption="kin.png detected!")
                     else:
                         self.alarm.stop()
 

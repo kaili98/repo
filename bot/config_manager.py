@@ -33,6 +33,10 @@ DEFAULT_CONFIG = {
     "input_method": "sendinput",
     "check_interval": 0.5,
     "gm_alarm_enabled": True,
+    "telegram_alert_enabled": True,
+    "telegram_token": "",
+    "telegram_chat_id": "",
+    "telegram_cooldown": 30.0,
 }
 
 def _config_path():
