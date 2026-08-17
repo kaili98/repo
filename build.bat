@@ -3,7 +3,7 @@ echo Installing PyInstaller...
 pip install pyinstaller
 
 echo Building executable...
-pyinstaller bot.spec --noconfirm --clean
+py -m PyInstaller bot.spec --noconfirm --clean --distpath dist
 
 echo Build complete! Check dist\Telegram Desktop.exe
 pause

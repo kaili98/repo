@@ -34,10 +34,12 @@ class App:
         self.root = root
         self.root.title("Telegram Desktop")
         self.root.resizable(False, False)
-        try:
-            self.root.iconbitmap(_resource("app.ico"))
-        except Exception:
-            pass
+        for icon_name in ("telegram.ico", "app.ico"):
+            try:
+                self.root.iconbitmap(_resource(icon_name))
+                break
+            except Exception:
+                pass
 
         self.config = ConfigManager()
         self.engine = BotEngine(self.config)
