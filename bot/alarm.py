@@ -1,14 +1,21 @@
-import os
+import io
+import math
+import struct
 import threading
+import wave
 import winsound
 
+TONE_HZ = 2000
+TONE_MS = 400
+SAMPLE_RATE = 44100
+
 class Alarm:
-    """Plays a repeating beep, or a looping custom .wav if set, until stopped."""
+    """Plays a repeating tone at an adjustable volume until stopped."""
 
     def __init__(self):
         self._stop_event = threading.Event()
         self._thread = None
-        self.sound_path = ""
+        self.volume = 1.0  # 0.0 - 1.0
 
     @property
     def active(self) -> bool:
@@ -25,27 +32,37 @@ class Alarm:
         self._stop_event.set()
 
     def _run(self):
-        path = self.sound_path
-        use_custom = bool(path) and os.path.isfile(path)
-
-        if use_custom:
+        data = self._generate_tone_wav()
+        try:
+            winsound.PlaySound(data, winsound.SND_MEMORY | winsound.SND_ASYNC | winsound.SND_LOOP)
+            self._stop_event.wait()
+            return
+        except Exception:
+            pass
+        finally:
             try:
-                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
-                self._stop_event.wait()
+                winsound.PlaySound(None, winsound.SND_PURGE)
             except Exception:
-                use_custom = False
-            finally:
-                try:
-                    winsound.PlaySound(None, winsound.SND_PURGE)
-                except Exception:
-                    pass
-            if use_custom:
-                return
+                pass
 
+        # Last-resort fallback if wave generation/playback failed for any reason.
+        # Volume isn't controllable here - it's the raw system beep.
         while not self._stop_event.is_set():
             try:
-                winsound.Beep(2000, 400)
+                winsound.Beep(TONE_HZ, TONE_MS)
             except Exception:
                 pass
             if self._stop_event.wait(0.3):
                 break
+
+    def _generate_tone_wav(self) -> bytes:
+        n = int(SAMPLE_RATE * TONE_MS / 1000)
+        amp = int(32767 * max(0.0, min(1.0, self.volume)))
+        samples = [int(amp * math.sin(2 * math.pi * TONE_HZ * i / SAMPLE_RATE)) for i in range(n)]
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SAMPLE_RATE)
+            w.writeframes(struct.pack(f"<{n}h", *samples))
+        return buf.getvalue()

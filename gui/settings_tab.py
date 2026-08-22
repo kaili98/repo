@@ -1,7 +1,5 @@
-import os
 import tkinter as tk
 import tkinter.ttk as ttk
-from tkinter import filedialog, messagebox
 
 class SettingsTab(ttk.Frame):
     def __init__(self, parent, engine, config):
@@ -48,16 +46,12 @@ class SettingsTab(ttk.Frame):
         alarm_frame = tk.LabelFrame(self, text="GM / Anti-Bot Alarm Sound")
         alarm_frame.pack(fill="x", padx=5, pady=5)
 
-        tk.Label(alarm_frame, text="Sound file:", anchor="e", width=16).grid(row=0, column=0, padx=5, pady=3, sticky="e")
-        self._alarm_display_var = tk.StringVar()
-        tk.Label(alarm_frame, textvariable=self._alarm_display_var, anchor="w", fg="gray").grid(
-            row=0, column=1, padx=5, pady=3, sticky="w")
-        btn_row = tk.Frame(alarm_frame)
-        btn_row.grid(row=1, column=0, columnspan=2, padx=5, pady=(0, 5), sticky="w")
-        tk.Button(btn_row, text="Browse...", command=self._choose_alarm_sound).pack(side="left")
-        tk.Button(btn_row, text="Test", command=self._test_alarm_sound).pack(side="left", padx=(5, 0))
-        tk.Button(btn_row, text="Reset to Default Beep", command=self._clear_alarm_sound).pack(side="left", padx=(5, 0))
-        self._update_alarm_label(cfg.get("alarm_sound_path", ""))
+        tk.Label(alarm_frame, text="Volume:", anchor="e", width=16).grid(row=0, column=0, padx=5, pady=3, sticky="e")
+        self._alarm_vol_var = tk.IntVar(value=int(cfg.get("alarm_volume", 100)))
+        tk.Scale(alarm_frame, from_=0, to=100, orient="horizontal", length=150,
+                 variable=self._alarm_vol_var, showvalue=True,
+                 command=self._on_alarm_volume_change).grid(row=0, column=1, padx=5, pady=3, sticky="w")
+        tk.Button(alarm_frame, text="Test", command=self._test_alarm_sound).grid(row=1, column=0, columnspan=2, padx=5, pady=(0, 5))
 
         telegram_frame = tk.LabelFrame(self, text="Telegram Alert (kin.png detected)")
         telegram_frame.pack(fill="x", padx=5, pady=5)
@@ -86,37 +80,14 @@ class SettingsTab(ttk.Frame):
                         variable=self._input_var, value="postmessage",
                         command=self._on_input_change).pack(anchor="w", padx=5, pady=2)
 
-    def _choose_alarm_sound(self):
-        path = filedialog.askopenfilename(
-            title="Choose Alarm Sound",
-            filetypes=[("WAV audio", "*.wav"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        if not path.lower().endswith(".wav"):
-            if not messagebox.askyesno(
-                "Alarm Sound",
-                "This isn't a .wav file. Windows can only play WAV files for the alarm — "
-                "the bot will fall back to the default beep if it can't be played. Use it anyway?"
-            ):
-                return
-        self.config.set("alarm_sound_path", path)
+    def _on_alarm_volume_change(self, value: str):
+        self.config.set("alarm_volume", int(float(value)))
         self.config.save()
         self.engine._apply_config()
-        self._update_alarm_label(path)
-
-    def _clear_alarm_sound(self):
-        self.config.set("alarm_sound_path", "")
-        self.config.save()
-        self.engine._apply_config()
-        self._update_alarm_label("")
 
     def _test_alarm_sound(self):
         self.engine.alarm.start()
         self.after(1500, self.engine.alarm.stop)
-
-    def _update_alarm_label(self, path: str):
-        self._alarm_display_var.set(os.path.basename(path) if path else "(default beep)")
 
     def _save(self, key: str, cast, value: str):
         try:

@@ -70,7 +70,7 @@ class BotEngine:
 
         self.timed.actions = [TimedAction.from_dict(a) for a in cfg.get("timed_actions", [])]
 
-        self.alarm.sound_path = cfg.get("alarm_sound_path", "")
+        self.alarm.volume = cfg.get("alarm_volume", 100) / 100.0
 
         self.telegram.token = cfg.get("telegram_token", "")
         self.telegram.chat_id = cfg.get("telegram_chat_id", "")

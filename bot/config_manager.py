@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
     "input_method": "sendinput",
     "check_interval": 0.5,
     "gm_alarm_enabled": True,
-    "alarm_sound_path": "",
+    "alarm_volume": 100,
     "telegram_alert_enabled": True,
     "telegram_token": "",
     "telegram_chat_id": "",
