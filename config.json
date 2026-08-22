@@ -26,5 +26,10 @@
   "idle_move_every": 30.0,
   "idle_move_hold": 0.3,
   "timed_actions": [],
-  "check_interval": 0.05
+  "check_interval": 0.05,
+  "gm_alarm_enabled": true,
+  "telegram_alert_enabled": true,
+  "telegram_token": "7605569688:AAFwhWoTc7-y9pecURjDqQpHkB4LHJoOkE0",
+  "telegram_chat_id": "-4763567692",
+  "telegram_cooldown": 30.0
 }

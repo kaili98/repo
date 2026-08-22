@@ -61,16 +61,21 @@ class App:
         root.geometry(f"{width}x{height}")
 
         root.bind("<F9>", lambda e: self._toggle())
+        root.bind("<F6>", lambda e: self._recalibrate())
 
         self._global_hotkey_ok = False
+        self._hotkey_error = None
         if _HAS_KEYBOARD:
             try:
                 _keyboard.add_hotkey("f9", self._toggle_threadsafe)
+                _keyboard.add_hotkey("f6", self._recalibrate_threadsafe)
                 self._global_hotkey_ok = True
-            except Exception:
-                pass
+            except Exception as e:
+                self._hotkey_error = str(e)
+        else:
+            self._hotkey_error = "The 'keyboard' package is not installed."
 
-        if not self._global_hotkey_ok and not _is_admin():
+        if not self._global_hotkey_ok:
             root.after(500, self._warn_no_global_hotkey)
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -84,12 +89,24 @@ class App:
             return
         self.engine.start()
 
+    def _recalibrate_threadsafe(self):
+        self.root.after(0, self._recalibrate)
+
+    def _recalibrate(self):
+        self.main_tab._calibrate()
+
     def _warn_no_global_hotkey(self):
+        detail = f"\n\nDetails: {self._hotkey_error}" if self._hotkey_error else ""
+        admin_hint = "" if _is_admin() else "\n\nTry running the bot as Administrator."
         messagebox.showinfo(
-            "F9 Hotkey",
-            "Global F9 hotkey is not active.\n\n"
-            "To use F9 from the game window, run the bot as Administrator.\n\n"
-            "For now, click Start or press F9 while this window is focused."
+            "Global Hotkeys",
+            "Global F9 (Start/Stop) and F6 (Recalibrate) hotkeys are not active.\n\n"
+            "They still work while this window is focused, but not while the game "
+            "window has focus.\n\n"
+            "If another program (e.g. NVIDIA overlay, OBS, Discord, Xbox Game Bar) is "
+            "also bound to F9 or F6, it may be intercepting the key first — try "
+            "changing or disabling that program's hotkey."
+            + admin_hint + detail
         )
 
     def _on_close(self):
@@ -97,6 +114,7 @@ class App:
         if _HAS_KEYBOARD and self._global_hotkey_ok:
             try:
                 _keyboard.remove_hotkey("f9")
+                _keyboard.remove_hotkey("f6")
             except Exception:
                 pass
         self.root.destroy()

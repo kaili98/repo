@@ -41,7 +41,7 @@ class MainTab(ttk.Frame):
 
         self._btn_start = tk.Button(controls_frame, text="Start (F9)", width=20, command=self.on_toggle)
         self._btn_start.pack(padx=5, pady=(5, 2))
-        tk.Button(controls_frame, text="Recalibrate Position", width=20, command=self._calibrate).pack(padx=5, pady=2)
+        tk.Button(controls_frame, text="Recalibrate Position (F6)", width=20, command=self._calibrate).pack(padx=5, pady=2)
         tk.Button(controls_frame, text="Screenshot Char Region", width=20, command=self._show_preview).pack(padx=5, pady=(2, 5))
 
         self._mode_var = tk.StringVar(value="background" if data.get("background_mode") else "normal")
