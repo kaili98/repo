@@ -10,6 +10,7 @@ from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
+from bot.lie_detector import LieDetectorFlow
 
 GM_CHECK_INTERVAL = 2.0
 
@@ -33,6 +34,7 @@ class BotEngine:
         self.gm = GMDetector(self.window)
         self.alarm = Alarm()
         self.telegram = TelegramNotifier()
+        self.lie_detector = LieDetectorFlow(self.telegram, self.inp, self.timed._focus_game)
         self.status = Status()
         self._thread = None
         self._stop_event = threading.Event()
@@ -132,8 +134,10 @@ class BotEngine:
                         self.alarm.start()
                         if not was_detected and cfg.get("telegram_alert_enabled"):
                             self.telegram.notify_async(self.gm.last_frame, caption="kin.png detected!")
+                            self.lie_detector.trigger()
                     else:
                         self.alarm.stop()
+                        self.lie_detector.cancel()
 
                 if self.status.gm_detected:
                     self.status.state = "GM / ANTI-BOT CHECK - PAUSED"
