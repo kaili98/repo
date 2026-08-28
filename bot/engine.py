@@ -8,6 +8,7 @@ from bot.input_handler import InputHandler
 from bot.repositioner import Repositioner
 from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
+from bot.player_detector import PlayerDetector
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -19,6 +20,8 @@ GM_CLEAR_CONFIRM_TICKS = 3       # consecutive "not detected" ticks required bef
                                   # the check as truly closed - a single miss is usually just
                                   # a mid-render/animation frame, not a real close, and acting
                                   # on it prematurely cancels/discards the active poll
+
+PLAYER_CHECK_INTERVAL = 1.0      # cadence for scanning the minimap for other players
 
 class Status:
     def __init__(self):
@@ -38,7 +41,9 @@ class BotEngine:
         self.repositioner = Repositioner(self.detector, self.inp)
         self.timed = TimedActionManager(self.inp)
         self.gm = GMDetector(self.window)
+        self.player_detector = PlayerDetector(self.window)
         self.alarm = Alarm()
+        self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
         self.lie_detector = LieDetectorFlow(self.telegram, self.inp, self.timed._focus_game)
         self.status = Status()
@@ -49,6 +54,9 @@ class BotEngine:
         self._idle_since = time.time()
         self._last_gm_check = 0.0
         self._gm_clear_streak = 0
+        self._last_double_jump = time.time()
+        self._last_player_check = 0.0
+        self._player_alarm_until = 0.0
         self._apply_config()
 
     def _apply_config(self):
@@ -58,6 +66,8 @@ class BotEngine:
         self.detector.r_min = cfg["yellow_r_min"]
         self.detector.g_min = cfg["yellow_g_min"]
         self.detector.b_max = cfg["yellow_b_max"]
+
+        self.player_detector.set_region(cfg["minimap_x"], cfg["minimap_y"], cfg["minimap_w"], cfg["minimap_h"])
 
         r = self.repositioner
         r.enabled = cfg["reposition_enabled"]
@@ -80,6 +90,7 @@ class BotEngine:
         self.timed.actions = [TimedAction.from_dict(a) for a in cfg.get("timed_actions", [])]
 
         self.alarm.volume = cfg.get("alarm_volume", 100) / 100.0
+        self.player_alarm.volume = cfg.get("alarm_volume", 100) / 100.0
 
         self.telegram.token = cfg.get("telegram_token", "")
         self.telegram.chat_id = cfg.get("telegram_chat_id", "")
@@ -95,6 +106,7 @@ class BotEngine:
         self.status.state = "Running"
         self._idle_baseline_x = None
         self._idle_since = time.time()
+        self._last_double_jump = time.time()
 
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -104,6 +116,8 @@ class BotEngine:
         self.status.running = False
         self.status.state = "Stopped"
         self.alarm.stop()
+        self.player_alarm.stop()
+        self._player_alarm_until = 0.0
 
     def idle_countdown(self) -> Optional[float]:
         """Seconds until the next idle move fires, or None if disabled."""
@@ -164,6 +178,19 @@ class BotEngine:
                         self.alarm.stop()
                         self.lie_detector.cancel()
 
+                if cfg.get("player_detect_enabled") and t0 - self._last_player_check >= PLAYER_CHECK_INTERVAL:
+                    self._last_player_check = t0
+                    if self.player_detector.check():
+                        if self._player_alarm_until == 0.0:
+                            self.player_alarm.start()
+                        # Extends the ring window while the player stays visible, instead of
+                        # going silent after 3s with the threat still on screen.
+                        self._player_alarm_until = t0 + cfg.get("player_alarm_duration", 3.0)
+
+                if self._player_alarm_until and t0 >= self._player_alarm_until:
+                    self.player_alarm.stop()
+                    self._player_alarm_until = 0.0
+
                 if self.status.gm_detected:
                     self.status.state = "GM / ANTI-BOT CHECK - PAUSED"
                     time.sleep(0.2)
@@ -191,6 +218,18 @@ class BotEngine:
                         self._idle_since = now
                         self._last_attack = time.time()
                         continue
+
+                if cfg.get("double_jump_enabled") and \
+                        time.time() - self._last_double_jump >= cfg.get("double_jump_interval", 40.0):
+                    self.status.state = "Double Jump"
+                    if not cfg["background_mode"]:
+                        self.timed._focus_game()
+                    self.inp.key_press("space", 0.05)
+                    time.sleep(0.15)
+                    self.inp.key_press("space", 0.05)
+                    self._last_double_jump = time.time()
+                    self._last_attack = time.time()
+                    continue
 
                 if self.timed.any_ready():
                     self.status.state = "Buffing"

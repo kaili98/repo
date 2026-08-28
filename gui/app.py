@@ -56,7 +56,7 @@ class App:
         notebook.add(self.settings_tab, text="Settings")
 
         root.update_idletasks()
-        width = max(200, root.winfo_width() - 60)
+        width = max(200, root.winfo_width() - 180)
         height = root.winfo_height()
         root.geometry(f"{width}x{height}")
 

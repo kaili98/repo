@@ -145,6 +145,28 @@ class MainTab(ttk.Frame):
                         command=lambda: self._save_bool("idle_move_enabled", self._idle_var.get())
                         ).pack(anchor="w", padx=5, pady=(0, 5))
 
+        dj_row = tk.Frame(repo_ctrl)
+        dj_row.pack(fill="x", padx=5, pady=(0, 5))
+        self._double_jump_var = tk.BooleanVar(value=data.get("double_jump_enabled", False))
+        tk.Checkbutton(dj_row, text="Double Jump on Idle", variable=self._double_jump_var,
+                        command=lambda: self._save_bool("double_jump_enabled", self._double_jump_var.get())
+                        ).pack(side="left")
+        tk.Label(dj_row, text="Every:").pack(side="left", padx=(10, 3))
+        self._dj_interval = tk.Entry(dj_row, width=5)
+        self._dj_interval.insert(0, str(data.get("double_jump_interval", 40.0)))
+        self._dj_interval.pack(side="left")
+        self._dj_interval.bind("<FocusOut>", lambda e: self._save_float("double_jump_interval", self._dj_interval.get()))
+        tk.Label(dj_row, text="s").pack(side="left", padx=(2, 0))
+
+        # ---- Player Detection ----
+        player_frame = tk.LabelFrame(self, text="Player Detection")
+        player_frame.pack(fill="x", padx=5, pady=5)
+        self._player_detect_var = tk.BooleanVar(value=data.get("player_detect_enabled", False))
+        tk.Checkbutton(player_frame, text="Detect other players on minimap", variable=self._player_detect_var,
+                        command=lambda: self._save_bool("player_detect_enabled", self._player_detect_var.get())
+                        ).pack(pady=(5, 0))
+        tk.Label(player_frame, text="When enabled, bot checks for other players.", fg="gray").pack(pady=(0, 5))
+
         self._refresh_windows()
 
     # ---- Window targeting ----
