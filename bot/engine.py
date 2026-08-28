@@ -12,7 +12,13 @@ from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
 
-GM_CHECK_INTERVAL = 2.0
+GM_CHECK_INTERVAL = 2.0          # cadence while nothing is detected
+GM_CHECK_INTERVAL_ACTIVE = 0.3   # faster cadence while a check is currently up, so a
+                                  # split-second close+reopen (failed LD attempt) isn't missed
+GM_CLEAR_CONFIRM_TICKS = 3       # consecutive "not detected" ticks required before treating
+                                  # the check as truly closed - a single miss is usually just
+                                  # a mid-render/animation frame, not a real close, and acting
+                                  # on it prematurely cancels/discards the active poll
 
 class Status:
     def __init__(self):
@@ -42,6 +48,7 @@ class BotEngine:
         self._idle_baseline_x = None
         self._idle_since = time.time()
         self._last_gm_check = 0.0
+        self._gm_clear_streak = 0
         self._apply_config()
 
     def _apply_config(self):
@@ -126,15 +133,33 @@ class BotEngine:
                     time.sleep(0.5)
                     continue
 
-                if cfg.get("gm_alarm_enabled") and t0 - self._last_gm_check >= GM_CHECK_INTERVAL:
+                # Poll faster while a check is currently up: this makes cancel() close the
+                # poll promptly once the dialog actually clears, and makes a resend for a
+                # fresh dialog prompt happen without delay once the flow goes idle again.
+                check_interval = GM_CHECK_INTERVAL_ACTIVE if self.status.gm_detected else GM_CHECK_INTERVAL
+                if cfg.get("gm_alarm_enabled") and t0 - self._last_gm_check >= check_interval:
                     self._last_gm_check = t0
-                    was_detected = self.status.gm_detected
-                    self.status.gm_detected = self.gm.check()
+                    detected_now = self.gm.check()
+                    if detected_now:
+                        self._gm_clear_streak = 0
+                        self.status.gm_detected = True
+                    else:
+                        self._gm_clear_streak += 1
+                        if self._gm_clear_streak >= GM_CLEAR_CONFIRM_TICKS:
+                            self.status.gm_detected = False
+                        # else: a single miss is likely just a mid-render frame, not treated
+                        # as a real close yet - keep the existing gm_detected/poll state.
+
                     if self.status.gm_detected:
                         self.alarm.start()
-                        if not was_detected and cfg.get("telegram_alert_enabled"):
-                            self.telegram.notify_async(self.gm.last_frame, caption="kin.png detected!")
-                            self.lie_detector.trigger()
+                        if cfg.get("telegram_alert_enabled"):
+                            # trigger() no-ops while a poll/answer is already in flight, and
+                            # re-arms itself the instant it's answered - so this doesn't rely
+                            # on ever sampling the brief closed moment between two prompts
+                            # (which a split-second close+reopen can slip past at any polling
+                            # rate); it just resends as soon as the flow is idle again and the
+                            # check is still showing.
+                            self.lie_detector.trigger(self.gm.last_frame)
                     else:
                         self.alarm.stop()
                         self.lie_detector.cancel()

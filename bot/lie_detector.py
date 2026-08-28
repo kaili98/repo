@@ -1,7 +1,10 @@
 import time
+from typing import Optional
+import numpy as np
 from bot.input_handler import InputHandler
 from bot.telegram_notifier import TelegramNotifier
 
+SCREENSHOT_CAPTION = "Lie Detector detected!"
 POLL_QUESTION = "Lie Detector detected - pick the answer"
 POLL_OPTIONS = ["1st option", "2nd option", "3rd option", "4th option", "Others: type your answer in chat"]
 OTHERS_INDEX = 4
@@ -24,14 +27,18 @@ class LieDetectorFlow:
         self._awaiting = False
         self._triggered_at = 0.0
 
-    def trigger(self):
+    def trigger(self, frame_bgra: Optional[np.ndarray] = None):
+        """Send the screenshot followed by the poll. No-ops while a previous poll/
+        answer for this detection is still in flight."""
         if not self.telegram.enabled:
             return
         if self._awaiting and time.time() - self._triggered_at < ANSWER_TIMEOUT:
             return
         self._awaiting = True
         self._triggered_at = time.time()
-        self.telegram.send_poll(POLL_QUESTION, POLL_OPTIONS, self._on_answer)
+        self.telegram.send_photo_then_poll(
+            frame_bgra, SCREENSHOT_CAPTION, POLL_QUESTION, POLL_OPTIONS, self._on_answer
+        )
 
     def cancel(self):
         """Call when the Lie Detector check is no longer detected - closes any

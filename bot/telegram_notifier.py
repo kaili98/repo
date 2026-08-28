@@ -45,6 +45,9 @@ class TelegramNotifier:
         threading.Thread(target=self._send, args=(frame_bgra.copy(), caption), daemon=True).start()
 
     def _send(self, frame_bgra: np.ndarray, caption: str):
+        self._encode_and_post_photo(frame_bgra, caption)
+
+    def _encode_and_post_photo(self, frame_bgra: np.ndarray, caption: str):
         try:
             frame_bgr = np.ascontiguousarray(frame_bgra[:, :, :3])
             ok, buf = cv2.imencode(".png", frame_bgr)
@@ -84,6 +87,27 @@ class TelegramNotifier:
         urllib.request.urlopen(req, timeout=15)
 
     # ---- Poll flow ----
+
+    def send_photo_then_poll(self, frame_bgra: Optional[np.ndarray], caption: str,
+                              question: str, options, on_answer: Callable[[int], None]):
+        """Fire-and-forget: send the screenshot, then the poll, as two sequential
+        requests on one background thread so they land in the chat in that order.
+        Not gated by the notify_async cooldown - callers throttle their own resends."""
+        if not self.enabled:
+            return
+        self.start_polling()
+        frame_copy = frame_bgra.copy() if frame_bgra is not None else None
+        threading.Thread(
+            target=self._send_photo_then_poll,
+            args=(frame_copy, caption, question, list(options), on_answer),
+            daemon=True,
+        ).start()
+
+    def _send_photo_then_poll(self, frame_bgra: Optional[np.ndarray], caption: str,
+                               question: str, options, on_answer: Callable[[int], None]):
+        if frame_bgra is not None:
+            self._encode_and_post_photo(frame_bgra, caption)
+        self._send_poll(question, options, on_answer)
 
     def send_poll(self, question: str, options, on_answer: Callable[[int], None]):
         """Fire-and-forget: send a single-choice poll and remember on_answer for
