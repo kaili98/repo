@@ -88,25 +88,28 @@ class TelegramNotifier:
 
     # ---- Poll flow ----
 
-    def send_photo_then_poll(self, frame_bgra: Optional[np.ndarray], caption: str,
-                              question: str, options, on_answer: Callable[[int], None]):
-        """Fire-and-forget: send the screenshot, then the poll, as two sequential
-        requests on one background thread so they land in the chat in that order.
-        Not gated by the notify_async cooldown - callers throttle their own resends."""
+    def send_photos_then_poll(self, frames, caption: str,
+                               question: str, options, on_answer: Callable[[int], None]):
+        """Fire-and-forget: send each screenshot in order, then the poll, all as
+        sequential requests on one background thread so they land in the chat in
+        that order. Not gated by the notify_async cooldown - callers throttle
+        their own resends."""
         if not self.enabled:
             return
         self.start_polling()
-        frame_copy = frame_bgra.copy() if frame_bgra is not None else None
+        frame_copies = [f.copy() for f in frames if f is not None]
         threading.Thread(
-            target=self._send_photo_then_poll,
-            args=(frame_copy, caption, question, list(options), on_answer),
+            target=self._send_photos_then_poll,
+            args=(frame_copies, caption, question, list(options), on_answer),
             daemon=True,
         ).start()
 
-    def _send_photo_then_poll(self, frame_bgra: Optional[np.ndarray], caption: str,
-                               question: str, options, on_answer: Callable[[int], None]):
-        if frame_bgra is not None:
-            self._encode_and_post_photo(frame_bgra, caption)
+    def _send_photos_then_poll(self, frames, caption: str,
+                                question: str, options, on_answer: Callable[[int], None]):
+        n = len(frames)
+        for i, frame in enumerate(frames, start=1):
+            frame_caption = f"{caption} ({i}/{n})" if n > 1 else caption
+            self._encode_and_post_photo(frame, frame_caption)
         self._send_poll(question, options, on_answer)
 
     def send_poll(self, question: str, options, on_answer: Callable[[int], None]):

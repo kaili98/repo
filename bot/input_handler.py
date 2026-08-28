@@ -5,10 +5,16 @@ from typing import Optional
 import win32api
 import win32con
 
+INPUT_MOUSE = 0
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 2
 KEYEVENTF_SCANCODE = 8
 KEYEVENTF_EXTENDEDKEY = 1
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_ABSOLUTE = 0x8000
+MOUSEEVENTF_WHEEL = 0x0800
+WHEEL_DELTA = 120
 
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
@@ -19,10 +25,21 @@ class KEYBDINPUT(ctypes.Structure):
         ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
     ]
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_long),
+        ("dwFlags", wt.DWORD),
+        ("time", wt.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
 class _INPUT_UNION(ctypes.Union):
     _fields_ = [
         ("ki", KEYBDINPUT),
-        ("padding", ctypes.c_byte * 28),
+        ("mi", MOUSEINPUT),
+        ("padding", ctypes.c_byte * 32),
     ]
 
 class INPUT(ctypes.Structure):
@@ -79,6 +96,26 @@ def _make_input(scan: int, extended: bool, key_up: bool) -> INPUT:
 def _send(scan: int, extended: bool, key_up: bool) -> None:
     inp = _make_input(scan, extended, key_up)
     ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+def _make_mouse_input(dx: int, dy: int, mouse_data: int, flags: int) -> INPUT:
+    inp = INPUT()
+    inp.type = INPUT_MOUSE
+    inp.union.mi.dx = dx
+    inp.union.mi.dy = dy
+    inp.union.mi.mouseData = mouse_data
+    inp.union.mi.dwFlags = flags
+    inp.union.mi.time = 0
+    inp.union.mi.dwExtraInfo = ctypes.pointer(ctypes.c_ulong(0))
+    return inp
+
+def _send_mouse(dx: int, dy: int, mouse_data: int, flags: int) -> None:
+    inp = _make_mouse_input(dx, dy, mouse_data, flags)
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
+def _to_absolute(x: int, y: int):
+    sw = ctypes.windll.user32.GetSystemMetrics(0)
+    sh = ctypes.windll.user32.GetSystemMetrics(1)
+    return int(x * 65535 / max(1, sw - 1)), int(y * 65535 / max(1, sh - 1))
 
 def _vk_from_scan(scan: int) -> int:
     return ctypes.windll.user32.MapVirtualKeyW(scan, MAPVK_VSC_TO_VK)
@@ -139,6 +176,21 @@ class InputHandler:
             return
 
         _send(scan, ext, True)
+
+    def move_mouse(self, x: int, y: int):
+        """Move the cursor to an absolute screen position. Foreground (SendInput)
+        only - no PostMessage equivalent, since games rarely honor synthetic mouse
+        messages the way they honor keyboard ones."""
+        ax, ay = _to_absolute(x, y)
+        _send_mouse(ax, ay, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
+
+    def scroll_at(self, x: int, y: int, notches: int = 3):
+        """Move the cursor to (x, y) and scroll the wheel down by `notches` clicks."""
+        if self.method == "postmessage":
+            return
+        self.move_mouse(x, y)
+        time.sleep(0.05)
+        _send_mouse(0, 0, -WHEEL_DELTA * notches, MOUSEEVENTF_WHEEL)
 
     def _pm_send(self, scan: int, extended: bool, key_up: bool):
         vk = _vk_from_scan(scan)

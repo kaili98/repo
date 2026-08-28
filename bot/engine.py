@@ -134,6 +134,51 @@ class BotEngine:
             self.status.calib_x = x
         return x
 
+    def _capture_full_game_frame(self):
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return None
+        w = rect[2] - rect[0]
+        h = rect[3] - rect[1]
+        if w <= 0 or h <= 0:
+            return None
+        return self.window.capture_region(0, 0, w, h)
+
+    def _scroll_dialog_target(self, cfg) -> Optional[tuple]:
+        """Absolute screen (x, y) to scroll at - a fixed point within the game
+        window's client area (0,0 = top-left), or None if there's no window."""
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return None
+        return rect[0] + cfg.get("dialog_scroll_x", 840), rect[1] + cfg.get("dialog_scroll_y", 350)
+
+    def _capture_lie_detector_frames(self, cfg) -> list:
+        """The initial detection screenshot, plus (if enabled and possible) a
+        second one after scrolling the dialog's option list down - so options
+        that didn't fit in the visible area aren't missed entirely."""
+        frames = [self.gm.last_frame]
+        if not cfg.get("dialog_scroll_enabled", True) or self.inp.method == "postmessage":
+            return frames
+
+        target = self._scroll_dialog_target(cfg)
+        if target is None:
+            return frames
+
+        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 3))
+        time.sleep(0.3)
+        frames.append(self._capture_full_game_frame())
+        return frames
+
+    def test_scroll(self) -> bool:
+        """Perform the configured dialog scroll right now, so the position can be
+        visually checked/tuned. Returns False if there's no target window."""
+        cfg = self.config.data
+        target = self._scroll_dialog_target(cfg)
+        if target is None:
+            return False
+        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 3))
+        return True
+
     def _loop(self):
         cfg = self.config.data
         tick = 0.05
@@ -173,7 +218,7 @@ class BotEngine:
                             # (which a split-second close+reopen can slip past at any polling
                             # rate); it just resends as soon as the flow is idle again and the
                             # check is still showing.
-                            self.lie_detector.trigger(self.gm.last_frame)
+                            self.lie_detector.trigger(self._capture_lie_detector_frames(cfg))
                     else:
                         self.alarm.stop()
                         self.lie_detector.cancel()

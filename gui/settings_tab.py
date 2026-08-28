@@ -70,6 +70,26 @@ class SettingsTab(ttk.Frame):
         row(telegram_frame, "Chat ID:", "telegram_chat_id", str, 2, 0)
         row(telegram_frame, "Cooldown (s):", "telegram_cooldown", float, 2, 2)
 
+        scroll_frame = tk.LabelFrame(self, text="Dialog Scroll (for option lists that need scrolling)")
+        scroll_frame.pack(fill="x", padx=5, pady=5)
+
+        self._scroll_var = tk.BooleanVar(value=cfg.get("dialog_scroll_enabled", True))
+        tk.Checkbutton(scroll_frame, text="Scroll down and send a 2nd screenshot", variable=self._scroll_var,
+                        command=lambda: self._save_bool("dialog_scroll_enabled", self._scroll_var.get())
+                        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=5, pady=(3, 0))
+
+        row(scroll_frame, "X:", "dialog_scroll_x", int, 1, 0)
+        row(scroll_frame, "Y:", "dialog_scroll_y", int, 1, 2)
+        row(scroll_frame, "Notches:", "dialog_scroll_notches", int, 2, 0)
+
+        tk.Label(scroll_frame, text="Position within the game window (0,0 = top-left).",
+                 fg="gray").grid(row=3, column=0, columnspan=4, sticky="w", padx=5, pady=(2, 0))
+        tk.Button(scroll_frame, text="Test Scroll", command=self._test_scroll).grid(
+            row=4, column=0, columnspan=4, padx=5, pady=5)
+        self._scroll_status_var = tk.StringVar(value="")
+        tk.Label(scroll_frame, textvariable=self._scroll_status_var, fg="gray").grid(
+            row=5, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 5))
+
         input_frame = tk.LabelFrame(self, text="Input Method")
         input_frame.pack(fill="x", padx=5, pady=5)
         self._input_var = tk.StringVar(value=cfg.get("input_method", "sendinput"))
@@ -88,6 +108,13 @@ class SettingsTab(ttk.Frame):
     def _test_alarm_sound(self):
         self.engine.alarm.start()
         self.after(1500, self.engine.alarm.stop)
+
+    def _test_scroll(self):
+        ok = self.engine.test_scroll()
+        if ok:
+            self._scroll_status_var.set("Scrolled - check the game to see if it landed on the option list.")
+        else:
+            self._scroll_status_var.set("No target window selected - pick one on the Main tab first.")
 
     def _save(self, key: str, cast, value: str):
         try:

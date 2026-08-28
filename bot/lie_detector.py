@@ -1,13 +1,17 @@
 import time
-from typing import Optional
+from typing import List, Optional
 import numpy as np
 from bot.input_handler import InputHandler
 from bot.telegram_notifier import TelegramNotifier
 
 SCREENSHOT_CAPTION = "Lie Detector detected!"
 POLL_QUESTION = "Lie Detector detected - pick the answer"
-POLL_OPTIONS = ["1st option", "2nd option", "3rd option", "4th option", "Others: type your answer in chat"]
-OTHERS_INDEX = 4
+POLL_OPTIONS = [
+    "1st option", "2nd option", "3rd option", "4th option",
+    "5th option", "6th option", "7th option", "8th option",
+    "Others: type your answer in chat",
+]
+OTHERS_INDEX = 8
 
 TYPE_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789 ")
 
@@ -27,17 +31,19 @@ class LieDetectorFlow:
         self._awaiting = False
         self._triggered_at = 0.0
 
-    def trigger(self, frame_bgra: Optional[np.ndarray] = None):
-        """Send the screenshot followed by the poll. No-ops while a previous poll/
-        answer for this detection is still in flight."""
+    def trigger(self, frames: Optional[List[Optional[np.ndarray]]] = None):
+        """Send the screenshot(s) followed by the poll. No-ops while a previous
+        poll/answer for this detection is still in flight. `frames` may contain
+        more than one screenshot (e.g. a second one after scrolling the dialog to
+        reveal options that didn't fit on screen)."""
         if not self.telegram.enabled:
             return
         if self._awaiting and time.time() - self._triggered_at < ANSWER_TIMEOUT:
             return
         self._awaiting = True
         self._triggered_at = time.time()
-        self.telegram.send_photo_then_poll(
-            frame_bgra, SCREENSHOT_CAPTION, POLL_QUESTION, POLL_OPTIONS, self._on_answer
+        self.telegram.send_photos_then_poll(
+            frames or [], SCREENSHOT_CAPTION, POLL_QUESTION, POLL_OPTIONS, self._on_answer
         )
 
     def cancel(self):
