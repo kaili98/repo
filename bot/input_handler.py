@@ -12,6 +12,8 @@ KEYEVENTF_SCANCODE = 8
 KEYEVENTF_EXTENDEDKEY = 1
 
 MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_ABSOLUTE = 0x8000
 MOUSEEVENTF_WHEEL = 0x0800
 WHEEL_DELTA = 120
@@ -184,12 +186,23 @@ class InputHandler:
         ax, ay = _to_absolute(x, y)
         _send_mouse(ax, ay, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE)
 
-    def scroll_at(self, x: int, y: int, notches: int = 3):
-        """Move the cursor to (x, y) and scroll the wheel down by `notches` clicks."""
+    def click_at(self, x: int, y: int):
+        """Move the cursor to (x, y) and perform a single left click there."""
         if self.method == "postmessage":
             return
         self.move_mouse(x, y)
         time.sleep(0.05)
+        _send_mouse(0, 0, 0, MOUSEEVENTF_LEFTDOWN)
+        time.sleep(0.05)
+        _send_mouse(0, 0, 0, MOUSEEVENTF_LEFTUP)
+
+    def scroll_at(self, x: int, y: int, notches: int = 3):
+        """Move the cursor to (x, y), left-click once (so the list under it has
+        focus), then scroll the wheel down by `notches` clicks."""
+        if self.method == "postmessage":
+            return
+        self.click_at(x, y)
+        time.sleep(0.1)
         _send_mouse(0, 0, -WHEEL_DELTA * notches, MOUSEEVENTF_WHEEL)
 
     def _pm_send(self, scan: int, extended: bool, key_up: bool):

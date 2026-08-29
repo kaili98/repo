@@ -86,6 +86,15 @@ class TelegramNotifier:
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         urllib.request.urlopen(req, timeout=15)
 
+    def send_photo(self, frame_bgra: Optional[np.ndarray], caption: str = ""):
+        """Fire-and-forget: send a single screenshot right away, on its own
+        background thread. Not gated by the notify_async cooldown."""
+        if not self.enabled or frame_bgra is None:
+            return
+        threading.Thread(
+            target=self._encode_and_post_photo, args=(frame_bgra.copy(), caption), daemon=True
+        ).start()
+
     # ---- Poll flow ----
 
     def send_photos_then_poll(self, frames, caption: str,

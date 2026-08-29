@@ -82,7 +82,7 @@ class SettingsTab(ttk.Frame):
         row(scroll_frame, "Y:", "dialog_scroll_y", int, 1, 2)
         row(scroll_frame, "Notches:", "dialog_scroll_notches", int, 2, 0)
 
-        tk.Label(scroll_frame, text="Position within the game window (0,0 = top-left).",
+        tk.Label(scroll_frame, text="Position within the game window (0,0 = top-left). Clicks once, then scrolls.",
                  fg="gray").grid(row=3, column=0, columnspan=4, sticky="w", padx=5, pady=(2, 0))
         tk.Button(scroll_frame, text="Test Scroll", command=self._test_scroll).grid(
             row=4, column=0, columnspan=4, padx=5, pady=5)

@@ -20,6 +20,10 @@ GM_CLEAR_CONFIRM_TICKS = 3       # consecutive "not detected" ticks required bef
                                   # the check as truly closed - a single miss is usually just
                                   # a mid-render/animation frame, not a real close, and acting
                                   # on it prematurely cancels/discards the active poll
+GM_TRIGGER_CONFIRM_TICKS = 2     # consecutive "detected" ticks required before actually sending
+                                  # a poll (the pause/alarm still react on the very first tick) -
+                                  # a single stray false-positive match (e.g. right after the real
+                                  # dialog closed) shouldn't be enough to fire a bogus new poll
 
 PLAYER_CHECK_INTERVAL = 1.0      # cadence for scanning the minimap for other players
 
@@ -54,6 +58,9 @@ class BotEngine:
         self._idle_since = time.time()
         self._last_gm_check = 0.0
         self._gm_clear_streak = 0
+        self._gm_detect_streak = 0
+        self._lie_detector_generation = 0
+        self._lie_detector_pending = False
         self._last_double_jump = time.time()
         self._last_player_check = 0.0
         self._player_alarm_until = 0.0
@@ -152,22 +159,41 @@ class BotEngine:
             return None
         return rect[0] + cfg.get("dialog_scroll_x", 840), rect[1] + cfg.get("dialog_scroll_y", 350)
 
-    def _capture_lie_detector_frames(self, cfg) -> list:
-        """The initial detection screenshot, plus (if enabled and possible) a
-        second one after scrolling the dialog's option list down - so options
-        that didn't fit in the visible area aren't missed entirely."""
-        frames = [self.gm.last_frame]
-        if not cfg.get("dialog_scroll_enabled", True) or self.inp.method == "postmessage":
-            return frames
+    def _trigger_lie_detector_async(self, cfg):
+        """Click+scroll the dialog, capture a single screenshot once it settles,
+        then send that screenshot with the poll - all off the main loop thread so
+        detection keeps running. Guarded by a generation counter + a pending flag
+        so a dialog closing/reopening before this finishes drops the (now stale)
+        attempt instead of sending a mismatched screenshot or double-firing."""
+        if self.lie_detector._awaiting or self._lie_detector_pending:
+            return
+        self._lie_detector_pending = True
+        self._lie_detector_generation += 1
+        generation = self._lie_detector_generation
+        threading.Thread(
+            target=self._capture_and_trigger_lie_detector, args=(cfg, generation), daemon=True
+        ).start()
 
-        target = self._scroll_dialog_target(cfg)
-        if target is None:
-            return frames
-
-        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 3))
-        time.sleep(0.3)
-        frames.append(self._capture_full_game_frame())
-        return frames
+    def _capture_and_trigger_lie_detector(self, cfg, generation):
+        try:
+            can_scroll = cfg.get("dialog_scroll_enabled", True) and self.inp.method != "postmessage"
+            target = self._scroll_dialog_target(cfg) if can_scroll else None
+            if target is not None:
+                self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 12))
+                # Give the in-game scroll animation time to actually finish before
+                # capturing, otherwise the screenshot shows a mid-scroll, half-settled
+                # state.
+                time.sleep(cfg.get("dialog_scroll_delay", 2.0))
+                if generation != self._lie_detector_generation:
+                    return  # dialog closed/reopened while scrolling - stale, drop it
+                frame = self._capture_full_game_frame()
+            else:
+                frame = self.gm.last_frame
+            if generation != self._lie_detector_generation:
+                return
+            self.lie_detector.trigger([frame])
+        finally:
+            self._lie_detector_pending = False
 
     def test_scroll(self) -> bool:
         """Perform the configured dialog scroll right now, so the position can be
@@ -176,7 +202,7 @@ class BotEngine:
         target = self._scroll_dialog_target(cfg)
         if target is None:
             return False
-        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 3))
+        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 12))
         return True
 
     def _loop(self):
@@ -201,8 +227,10 @@ class BotEngine:
                     detected_now = self.gm.check()
                     if detected_now:
                         self._gm_clear_streak = 0
+                        self._gm_detect_streak += 1
                         self.status.gm_detected = True
                     else:
+                        self._gm_detect_streak = 0
                         self._gm_clear_streak += 1
                         if self._gm_clear_streak >= GM_CLEAR_CONFIRM_TICKS:
                             self.status.gm_detected = False
@@ -211,17 +239,20 @@ class BotEngine:
 
                     if self.status.gm_detected:
                         self.alarm.start()
-                        if cfg.get("telegram_alert_enabled"):
-                            # trigger() no-ops while a poll/answer is already in flight, and
-                            # re-arms itself the instant it's answered - so this doesn't rely
-                            # on ever sampling the brief closed moment between two prompts
-                            # (which a split-second close+reopen can slip past at any polling
-                            # rate); it just resends as soon as the flow is idle again and the
-                            # check is still showing.
-                            self.lie_detector.trigger(self._capture_lie_detector_frames(cfg))
+                        # trigger() no-ops while a poll/answer is already in flight, and re-arms
+                        # itself the instant it's answered - so this doesn't rely on ever
+                        # sampling the brief closed moment between two prompts (which a
+                        # split-second close+reopen can slip past at any polling rate); it just
+                        # resends once the flow is idle and the check is still showing. Gated on
+                        # _gm_detect_streak (unlike the alarm/pause above, which react on the
+                        # very first tick) so a lone false-positive blip after the real dialog
+                        # closed can't fire a bogus new poll on its own.
+                        if cfg.get("telegram_alert_enabled") and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS:
+                            self._trigger_lie_detector_async(cfg)
                     else:
                         self.alarm.stop()
                         self.lie_detector.cancel()
+                        self._lie_detector_generation += 1  # drop any still-pending capture
 
                 if cfg.get("player_detect_enabled") and t0 - self._last_player_check >= PLAYER_CHECK_INTERVAL:
                     self._last_player_check = t0

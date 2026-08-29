@@ -31,20 +31,24 @@ class LieDetectorFlow:
         self._awaiting = False
         self._triggered_at = 0.0
 
-    def trigger(self, frames: Optional[List[Optional[np.ndarray]]] = None):
+    def trigger(self, frames: Optional[List[Optional[np.ndarray]]] = None) -> bool:
         """Send the screenshot(s) followed by the poll. No-ops while a previous
         poll/answer for this detection is still in flight. `frames` may contain
         more than one screenshot (e.g. a second one after scrolling the dialog to
-        reveal options that didn't fit on screen)."""
+        reveal options that didn't fit on screen). Returns True iff it actually
+        sent (vs no-op'd), so callers can gate follow-up work (like a scrolled
+        2nd screenshot) on this being a genuinely new poll, not a repeat tick
+        while the same one is still outstanding."""
         if not self.telegram.enabled:
-            return
+            return False
         if self._awaiting and time.time() - self._triggered_at < ANSWER_TIMEOUT:
-            return
+            return False
         self._awaiting = True
         self._triggered_at = time.time()
         self.telegram.send_photos_then_poll(
             frames or [], SCREENSHOT_CAPTION, POLL_QUESTION, POLL_OPTIONS, self._on_answer
         )
+        return True
 
     def cancel(self):
         """Call when the Lie Detector check is no longer detected - closes any
