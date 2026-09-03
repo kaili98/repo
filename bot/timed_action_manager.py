@@ -64,6 +64,13 @@ class TimedActionManager:
         if not hwnd:
             return
         try:
+            # SetForegroundWindow (plus the settle delay after it) is only needed
+            # when the game isn't already focused - calling it unconditionally on
+            # every single attack added a real (and very machine-dependent, since
+            # SetForegroundWindow's cost varies with Windows' foreground-lock
+            # behavior) delay to every attack even in the common steady-state case.
+            if win32gui.GetForegroundWindow() == hwnd:
+                return
             if win32gui.IsIconic(hwnd):
                 win32gui.ShowWindow(hwnd, 9)
             win32gui.SetForegroundWindow(hwnd)

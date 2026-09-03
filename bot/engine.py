@@ -50,6 +50,7 @@ class BotEngine:
         self.alarm = Alarm()
         self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
+        self.telegram.set_command_handler(self._handle_telegram_command)
         self.lie_detector = LieDetectorFlow(self.telegram, self.inp, self.timed._focus_game)
         self.status = Status()
         self._thread = None
@@ -105,6 +106,10 @@ class BotEngine:
         self.telegram.token = cfg.get("telegram_token", "")
         self.telegram.chat_id = cfg.get("telegram_chat_id", "")
         self.telegram.cooldown = cfg.get("telegram_cooldown", 30.0)
+        if self.telegram.enabled:
+            # Listen for chat commands (e.g. /screenshot) even while the bot
+            # itself isn't running - not gated behind start()/stop().
+            self.telegram.start_polling()
 
     def start(self):
         if self.status.running:
@@ -155,6 +160,12 @@ class BotEngine:
         if w <= 0 or h <= 0:
             return None
         return self.window.capture_region(0, 0, w, h)
+
+    def _handle_telegram_command(self, text: str):
+        cmd = text.split()[0].lower()
+        if cmd == "/screenshot":
+            frame = self._capture_full_game_frame()
+            self.telegram.send_photo(frame, "Screenshot")
 
     def _scroll_dialog_target(self, cfg) -> Optional[tuple]:
         """Absolute screen (x, y) to scroll at - a fixed point within the game

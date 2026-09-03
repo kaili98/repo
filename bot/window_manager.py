@@ -1,3 +1,4 @@
+import threading
 from typing import List, Optional, Tuple
 import numpy as np
 import win32gui
@@ -6,6 +7,7 @@ import mss
 class WindowManager:
     def __init__(self):
         self._hwnd: Optional[int] = None
+        self._local = threading.local()
 
     def list_windows(self) -> List[Tuple[int, str]]:
         windows = []
@@ -42,6 +44,18 @@ class WindowManager:
         except Exception:
             return None
 
+    def _sct(self) -> mss.mss:
+        """One mss instance per thread, reused across calls - creating a new one
+        per capture involves real setup/teardown cost (GDI/DXGI resources) that
+        varies a lot by hardware/driver, and was previously paid on every single
+        capture (multiple times per attack-loop tick), which is enough to visibly
+        stall attack timing on slower or differently-driver'd machines."""
+        sct = getattr(self._local, "sct", None)
+        if sct is None:
+            sct = mss.mss()
+            self._local.sct = sct
+        return sct
+
     def capture_region(self, x: int, y: int, w: int, h: int) -> Optional[np.ndarray]:
         """Capture a region relative to the game window client area. Returns BGRA array."""
         rect = self.get_client_rect_screen()
@@ -52,9 +66,12 @@ class WindowManager:
         abs_y = rect[1] + y
 
         try:
-            with mss.mss() as sct:
-                mon = {"left": abs_x, "top": abs_y, "width": max(1, w), "height": max(1, h)}
-                shot = sct.grab(mon)
-                return np.array(shot)
+            sct = self._sct()
+            mon = {"left": abs_x, "top": abs_y, "width": max(1, w), "height": max(1, h)}
+            shot = sct.grab(mon)
+            return np.array(shot)
         except Exception:
+            # The cached instance may have gone stale (e.g. display config changed) -
+            # drop it so the next call on this thread creates a fresh one.
+            self._local.sct = None
             return None

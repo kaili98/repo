@@ -20,6 +20,7 @@ class TelegramNotifier:
         self._poll_callbacks: Dict[str, Callable[[int], None]] = {}
         self._text_callback: Optional[Callable[[str], None]] = None
         self._text_wait_since = 0.0
+        self._command_callback: Optional[Callable[[str], None]] = None
         self._active_poll_id: Optional[str] = None
         self._active_poll_message_id: Optional[int] = None
         self._callback_lock = threading.Lock()
@@ -179,6 +180,12 @@ class TelegramNotifier:
         with self._callback_lock:
             self._text_callback = None
 
+    def set_command_handler(self, callback: Optional[Callable[[str], None]]):
+        """Register a callback invoked with the raw text of any chat message that
+        starts with "/" (e.g. "/screenshot"), independent of - and takes priority
+        over - the request_text() wait used for Lie Detector replies."""
+        self._command_callback = callback
+
     def _stop_poll_async(self, message_id: int):
         threading.Thread(target=self._stop_poll, args=(message_id,), daemon=True).start()
 
@@ -245,10 +252,14 @@ class TelegramNotifier:
         if message and "text" in message:
             if str(message.get("chat", {}).get("id")) != str(self.chat_id):
                 return
+            text = message["text"]
+            if text.startswith("/") and self._command_callback:
+                self._command_callback(text.strip())
+                return
             if message.get("date", 0) < self._text_wait_since:
                 return
             with self._callback_lock:
                 cb = self._text_callback
                 self._text_callback = None
             if cb:
-                cb(message["text"])
+                cb(text)
