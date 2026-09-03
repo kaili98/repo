@@ -13,7 +13,8 @@ from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
 
-GM_CHECK_INTERVAL = 2.0          # cadence while nothing is detected
+GM_CHECK_INTERVAL = 0.5          # cadence while nothing is detected - kept fast so a fresh
+                                  # LD dialog gets caught quickly from a cold (idle) state
 GM_CHECK_INTERVAL_ACTIVE = 0.3   # faster cadence while a check is currently up, so a
                                   # split-second close+reopen (failed LD attempt) isn't missed
 GM_CLEAR_CONFIRM_TICKS = 3       # consecutive "not detected" ticks required before treating
@@ -52,6 +53,7 @@ class BotEngine:
         self.lie_detector = LieDetectorFlow(self.telegram, self.inp, self.timed._focus_game)
         self.status = Status()
         self._thread = None
+        self._detect_thread = None
         self._stop_event = threading.Event()
         self._last_attack = 0.0
         self._idle_baseline_x = None
@@ -61,6 +63,7 @@ class BotEngine:
         self._gm_detect_streak = 0
         self._lie_detector_generation = 0
         self._lie_detector_pending = False
+        self._seen_miss_since_trigger = True  # allow the very first trigger unconditionally
         self._last_double_jump = time.time()
         self._last_player_check = 0.0
         self._player_alarm_until = 0.0
@@ -117,6 +120,8 @@ class BotEngine:
 
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        self._detect_thread = threading.Thread(target=self._detection_loop, daemon=True)
+        self._detect_thread.start()
 
     def stop(self):
         self._stop_event.set()
@@ -167,6 +172,7 @@ class BotEngine:
         attempt instead of sending a mismatched screenshot or double-firing."""
         if self.lie_detector._awaiting or self._lie_detector_pending:
             return
+        self._seen_miss_since_trigger = False  # require a fresh miss before the next resend
         self._lie_detector_pending = True
         self._lie_detector_generation += 1
         generation = self._lie_detector_generation
@@ -205,16 +211,20 @@ class BotEngine:
         self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 12))
         return True
 
-    def _loop(self):
+    def _detection_loop(self):
+        """Runs the anti-bot banner and player-marker scans on their own thread,
+        decoupled from the action loop below. Both involve a screen capture plus
+        several template matches, which can take long enough on slower hardware
+        to noticeably stall attack/reposition timing if run inline with it - this
+        keeps that cost from ever blocking the action loop, regardless of how slow
+        a scan is on any given machine."""
         cfg = self.config.data
-        tick = 0.05
 
         try:
             while not self._stop_event.is_set():
                 t0 = time.time()
 
                 if not self.window.is_valid():
-                    self.status.state = "No window"
                     time.sleep(0.5)
                     continue
 
@@ -232,22 +242,36 @@ class BotEngine:
                     else:
                         self._gm_detect_streak = 0
                         self._gm_clear_streak += 1
+                        # Raw (undebounced) signal that the dialog visually went away at least
+                        # once, even just for a single tick - required before a resend is
+                        # allowed (see below). Deliberately NOT gated behind the slower 3-tick
+                        # GM_CLEAR_CONFIRM_TICKS debounce: requiring a fully confirmed close
+                        # first would miss a close+reopen that happens faster than that debounce
+                        # window, which is exactly the failure mode this is avoiding.
+                        self._seen_miss_since_trigger = True
                         if self._gm_clear_streak >= GM_CLEAR_CONFIRM_TICKS:
                             self.status.gm_detected = False
                         # else: a single miss is likely just a mid-render frame, not treated
                         # as a real close yet - keep the existing gm_detected/poll state.
 
                     if self.status.gm_detected:
-                        self.alarm.start()
+                        # Gated on _gm_detect_streak (not the very first tick) so a lone
+                        # false-positive blip rings the alarm for a moment with nothing to show
+                        # for it in Telegram - the pause/PAUSED state above still reacts
+                        # instantly regardless, since staying cautious on an unconfirmed hit is
+                        # the safe default even if it turns out to be nothing.
+                        if self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS:
+                            self.alarm.start()
                         # trigger() no-ops while a poll/answer is already in flight, and re-arms
-                        # itself the instant it's answered - so this doesn't rely on ever
-                        # sampling the brief closed moment between two prompts (which a
-                        # split-second close+reopen can slip past at any polling rate); it just
-                        # resends once the flow is idle and the check is still showing. Gated on
-                        # _gm_detect_streak (unlike the alarm/pause above, which react on the
-                        # very first tick) so a lone false-positive blip after the real dialog
-                        # closed can't fire a bogus new poll on its own.
-                        if cfg.get("telegram_alert_enabled") and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS:
+                        # itself the instant it's answered. Gated on _gm_detect_streak (unlike
+                        # the alarm/pause above, which react on the very first tick) so a lone
+                        # false-positive blip can't fire a bogus new poll on its own, AND on
+                        # _seen_miss_since_trigger so a resend only happens once the dialog has
+                        # actually been seen to go away (even briefly) since the last poll -
+                        # not just because the previous poll got answered while the same dialog
+                        # was still continuously showing.
+                        if cfg.get("telegram_alert_enabled") and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS \
+                                and self._seen_miss_since_trigger:
                             self._trigger_lie_detector_async(cfg)
                     else:
                         self.alarm.stop()
@@ -267,7 +291,32 @@ class BotEngine:
                     self.player_alarm.stop()
                     self._player_alarm_until = 0.0
 
-                if self.status.gm_detected:
+                time.sleep(0.05)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        finally:
+            self.alarm.stop()
+            self.player_alarm.stop()
+
+    def _loop(self):
+        cfg = self.config.data
+        tick = 0.05
+
+        try:
+            while not self._stop_event.is_set():
+                t0 = time.time()
+
+                if not self.window.is_valid():
+                    self.status.state = "No window"
+                    time.sleep(0.5)
+                    continue
+
+                if self.status.gm_detected or self.lie_detector._awaiting:
+                    # Also stays paused while a Lie Detector answer is still in flight
+                    # (e.g. mid-exchange on "2 Actions" or "Others"), even if the check's
+                    # on-screen banner itself has already cleared - so normal play doesn't
+                    # resume out from under a reply you haven't finished sending yet.
                     self.status.state = "GM / ANTI-BOT CHECK - PAUSED"
                     time.sleep(0.2)
                     continue

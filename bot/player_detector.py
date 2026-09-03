@@ -13,9 +13,9 @@ def _resource_path(filename: str) -> str:
 
 class PlayerDetector:
     """Scans the same minimap region used for character detection for another
-    player's marker (others.png) via template matching."""
+    player's marker (red.png) via template matching."""
 
-    def __init__(self, wm: WindowManager, template_path: str = "others.png", threshold: float = 0.85):
+    def __init__(self, wm: WindowManager, template_path: str = "red.png", threshold: float = 0.85):
         self.wm = wm
         self.threshold = threshold
         self.template = None
@@ -37,7 +37,7 @@ class PlayerDetector:
         self.region_h = h
 
     def check(self) -> bool:
-        """Capture the char/minimap region and return True if others.png is found in it."""
+        """Capture the char/minimap region and return True if red.png is found in it."""
         if self.template is None:
             return False
 

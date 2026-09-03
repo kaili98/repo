@@ -8,12 +8,21 @@ SCREENSHOT_CAPTION = "Lie Detector detected!"
 POLL_QUESTION = "Lie Detector detected - pick the answer"
 POLL_OPTIONS = [
     "1st option", "2nd option", "3rd option", "4th option",
-    "5th option", "6th option", "7th option", "8th option",
+    "5th option", "6th option", "7th option", "jump,moveleft",
+    "2 Actions: send 2 key names in chat",
     "Others: type your answer in chat",
 ]
-OTHERS_INDEX = 8
+JUMP_MOVE_LEFT_INDEX = 7
+TWO_ACTIONS_INDEX = 8
+OTHERS_INDEX = 9
 
 TYPE_CHARS = set("abcdefghijklmnopqrstuvwxyz0123456789 ")
+
+# Left/right need a real hold (e.g. to actually walk into a checkpoint), unlike a
+# quick tap for something like a jump.
+HELD_ACTION_KEYS = {"left", "right"}
+HELD_ACTION_DURATION = 1.0
+TAP_ACTION_DURATION = 0.05
 
 # How long to wait for an answer before allowing the poll to be re-sent
 # (e.g. if it was never answered, or the app was restarted).
@@ -29,6 +38,7 @@ class LieDetectorFlow:
         self.inp = inp
         self.focus_fn = focus_fn
         self._awaiting = False
+        self._answered = False
         self._triggered_at = 0.0
 
     def trigger(self, frames: Optional[List[Optional[np.ndarray]]] = None) -> bool:
@@ -44,6 +54,7 @@ class LieDetectorFlow:
         if self._awaiting and time.time() - self._triggered_at < ANSWER_TIMEOUT:
             return False
         self._awaiting = True
+        self._answered = False
         self._triggered_at = time.time()
         self.telegram.send_photos_then_poll(
             frames or [], SCREENSHOT_CAPTION, POLL_QUESTION, POLL_OPTIONS, self._on_answer
@@ -51,17 +62,31 @@ class LieDetectorFlow:
         return True
 
     def cancel(self):
-        """Call when the Lie Detector check is no longer detected - closes any
-        outstanding poll/text wait so a stale one can't be answered late."""
-        if not self._awaiting:
+        """Call when the Lie Detector check is no longer detected - closes an
+        outstanding, *unanswered* poll so a stale one can't be voted on late.
+        Once you've actually picked an option, this becomes a no-op: the check's
+        on-screen banner can disappear (e.g. right after the dismiss keypress for
+        "2 Actions") well before you've finished replying, and we don't want that
+        to cancel your still-pending exchange out from under you."""
+        if not self._awaiting or self._answered:
             return
         self._awaiting = False
         self.telegram.close_active_poll()
         self.telegram.cancel_text_wait()
 
     def _on_answer(self, option_index: int):
+        self._answered = True
         if option_index == OTHERS_INDEX:
             self.telegram.request_text(self._on_text)
+            return
+        if option_index == TWO_ACTIONS_INDEX:
+            self._start_two_actions()
+            return
+        if option_index == JUMP_MOVE_LEFT_INDEX:
+            try:
+                self._do_jump_move_left()
+            finally:
+                self._awaiting = False
             return
         try:
             self._submit_downs(option_index)
@@ -73,6 +98,46 @@ class LieDetectorFlow:
             self._type_text(text)
         finally:
             self._awaiting = False
+
+    def _start_two_actions(self):
+        """The check needs two sequential in-game actions (e.g. jump, then move)
+        rather than picking from a list. Enter dismisses the check's initial
+        popup, then each of the next two chat messages is treated as one key
+        name (not typed as literal characters) and pressed in order."""
+        try:
+            self.focus_fn()
+            self.inp.key_press("enter", 0.05)
+        except Exception:
+            pass
+        self.telegram.request_text(self._on_action_1)
+
+    def _on_action_1(self, text: str):
+        try:
+            self._press_key_action(text)
+        finally:
+            self.telegram.request_text(self._on_action_2)
+
+    def _on_action_2(self, text: str):
+        try:
+            self._press_key_action(text)
+        finally:
+            self._awaiting = False
+
+    def _do_jump_move_left(self):
+        """Fixed macro for the 'jump,moveleft' option - dismiss with Enter, jump,
+        then hold left to walk off. No further Telegram interaction needed."""
+        self.focus_fn()
+        self.inp.key_press("enter", 0.05)
+        time.sleep(0.05)
+        self.inp.key_press("space", TAP_ACTION_DURATION)
+        time.sleep(0.05)
+        self._press_key_action("left")
+
+    def _press_key_action(self, key_name: str):
+        key = key_name.strip().lower()
+        hold = HELD_ACTION_DURATION if key in HELD_ACTION_KEYS else TAP_ACTION_DURATION
+        self.focus_fn()
+        self.inp.key_press(key, hold)
 
     def _submit_downs(self, n: int):
         self.focus_fn()
