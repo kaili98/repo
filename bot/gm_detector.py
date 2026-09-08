@@ -15,11 +15,12 @@ def _resource_path(filename: str) -> str:
 class GMDetector:
     """Scans the full game window for any of several nameplate templates (the
     anti-bot check icon varies between kin.png, kuro.png, viptaxi.png,
-    humancheck.png, anti.png, etc) via template matching."""
+    humancheck.png, human-check-black.png, anti.png, etc) via template matching."""
 
     def __init__(self, wm: WindowManager,
                  template_paths: Sequence[str] = (
-                     "kin.png", "kuro.png", "viptaxi.png", "humancheck.png", "anti.png",
+                     "kin.png", "kuro.png", "viptaxi.png", "humancheck.png",
+                     "human-check-black.png", "anti.png",
                  ),
                  threshold: float = 0.85):
         self.wm = wm

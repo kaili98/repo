@@ -9,6 +9,7 @@ from bot.repositioner import Repositioner
 from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
+from bot.jump_left_detector import JumpLeftDetector
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -47,6 +48,7 @@ class BotEngine:
         self.timed = TimedActionManager(self.inp)
         self.gm = GMDetector(self.window)
         self.player_detector = PlayerDetector(self.window)
+        self.jump_left_detector = JumpLeftDetector()
         self.alarm = Alarm()
         self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
@@ -208,7 +210,24 @@ class BotEngine:
                 frame = self.gm.last_frame
             if generation != self._lie_detector_generation:
                 return
-            self.lie_detector.trigger([frame])
+
+            # The "jump+left" instruction banner only appears after the dialog has
+            # been scrolled into view, so this check has to happen on the
+            # post-scroll frame above, not the initial (pre-scroll) detection frame.
+            if cfg.get("auto_solve_enabled") and frame is not None and self.jump_left_detector.check_frame(frame):
+                self.lie_detector.auto_solve_jump_left()
+                # Give the game a moment to settle after the move before
+                # capturing, so the screenshot shows the result of the solve
+                # rather than a mid-walk/mid-transition frame.
+                time.sleep(2.0)
+                if generation != self._lie_detector_generation:
+                    return
+                confirm_frame = self._capture_full_game_frame()
+                self.telegram.send_photo(confirm_frame, "Auto-solved Jump + Move Left")
+                return
+
+            if cfg.get("telegram_alert_enabled"):
+                self.lie_detector.trigger([frame])
         finally:
             self._lie_detector_pending = False
 
@@ -273,15 +292,19 @@ class BotEngine:
                         # the safe default even if it turns out to be nothing.
                         if self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS:
                             self.alarm.start()
-                        # trigger() no-ops while a poll/answer is already in flight, and re-arms
-                        # itself the instant it's answered. Gated on _gm_detect_streak (unlike
-                        # the alarm/pause above, which react on the very first tick) so a lone
-                        # false-positive blip can't fire a bogus new poll on its own, AND on
-                        # _seen_miss_since_trigger so a resend only happens once the dialog has
-                        # actually been seen to go away (even briefly) since the last poll -
-                        # not just because the previous poll got answered while the same dialog
-                        # was still continuously showing.
-                        if cfg.get("telegram_alert_enabled") and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS \
+                        # _trigger_lie_detector_async no-ops while a poll/answer is already in
+                        # flight, and re-arms itself the instant it's answered. Gated on
+                        # _gm_detect_streak (unlike the alarm/pause above, which react on the
+                        # very first tick) so a lone false-positive blip can't fire a bogus new
+                        # poll on its own, AND on _seen_miss_since_trigger so a resend only
+                        # happens once the dialog has actually been seen to go away (even
+                        # briefly) since the last poll - not just because the previous poll got
+                        # answered while the same dialog was still continuously showing. Fires
+                        # whenever either auto-solve or the Telegram poll could apply - which of
+                        # the two actually happens is decided after the scroll+capture, since the
+                        # jump+left banner (if any) only appears post-scroll.
+                        if (cfg.get("auto_solve_enabled") or cfg.get("telegram_alert_enabled")) \
+                                and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS \
                                 and self._seen_miss_since_trigger:
                             self._trigger_lie_detector_async(cfg)
                     else:

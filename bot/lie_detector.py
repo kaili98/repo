@@ -123,14 +123,34 @@ class LieDetectorFlow:
         finally:
             self._awaiting = False
 
+    def auto_solve_jump_left(self):
+        """Directly perform the 'jump,moveleft' macro (Enter, Space, hold Left
+        1s) without going through Telegram at all - used when auto-solve is
+        enabled and the jump+left LD variant is detected. No-ops if a poll-driven
+        exchange is already in flight."""
+        if self._awaiting:
+            return
+        self._awaiting = True
+        self._answered = True  # nothing to answer - not a poll-driven flow
+        try:
+            self._do_jump_move_left()
+        finally:
+            self._awaiting = False
+
     def _do_jump_move_left(self):
         """Fixed macro for the 'jump,moveleft' option - dismiss with Enter, jump,
         then hold left to walk off. No further Telegram interaction needed."""
         self.focus_fn()
         self.inp.key_press("enter", 0.05)
-        time.sleep(0.05)
-        self.inp.key_press("space", TAP_ACTION_DURATION)
-        time.sleep(0.05)
+        # The popup->gameplay transition needs a beat before the game actually
+        # registers a jump - a 0.05s gap sometimes dropped the space press
+        # entirely (left still landed since its hold is much longer at 1s).
+        # 0.15s matches the gap already proven reliable for the double-jump
+        # elsewhere in this codebase.
+        time.sleep(0.15)
+        self.focus_fn()
+        self.inp.key_press("space", 0.1)
+        time.sleep(0.15)
         self._press_key_action("left")
 
     def _press_key_action(self, key_name: str):

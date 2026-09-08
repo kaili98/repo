@@ -47,6 +47,7 @@ DEFAULT_CONFIG = {
     "telegram_token": "",
     "telegram_chat_id": "",
     "telegram_cooldown": 30.0,
+    "auto_solve_enabled": False,
 }
 
 def _config_path():
