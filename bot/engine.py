@@ -10,6 +10,7 @@ from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
 from bot.jump_left_detector import JumpLeftDetector
+from bot.human_check_puzzle import HumanCheckPuzzleSolver, ICON_OFFSETS
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -49,6 +50,7 @@ class BotEngine:
         self.gm = GMDetector(self.window)
         self.player_detector = PlayerDetector(self.window)
         self.jump_left_detector = JumpLeftDetector()
+        self.puzzle_solver = HumanCheckPuzzleSolver()
         self.alarm = Alarm()
         self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
@@ -193,8 +195,45 @@ class BotEngine:
             target=self._capture_and_trigger_lie_detector, args=(cfg, generation), daemon=True
         ).start()
 
+    def _try_auto_solve_puzzle(self, cfg, frame, generation) -> bool:
+        """If the Human Check picture-difference puzzle is in `frame`, solve it
+        and send a confirmation screenshot. Returns True iff it fired (so the
+        caller can skip everything else for this detection)."""
+        if not cfg.get("auto_solve_puzzle_enabled") or frame is None:
+            return False
+        anchor_pos = self.puzzle_solver.locate(frame)
+        if anchor_pos is None:
+            return False
+        odd_index = self.puzzle_solver.find_odd_icon(frame, anchor_pos)
+        if odd_index is None:
+            return False
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return False
+        dx, dy = ICON_OFFSETS[odd_index]
+        screen_x = rect[0] + anchor_pos[0] + dx
+        screen_y = rect[1] + anchor_pos[1] + dy
+        self.lie_detector.auto_solve_puzzle_click(screen_x, screen_y)
+        time.sleep(2.0)
+        if generation != self._lie_detector_generation:
+            return True
+        confirm_frame = self._capture_full_game_frame()
+        self.telegram.send_photo(confirm_frame, f"Auto-solved Human Check puzzle (clicked option {odd_index + 1})")
+        return True
+
     def _capture_and_trigger_lie_detector(self, cfg, generation):
         try:
+            # The Human Check picture puzzle is fully visible without scrolling
+            # (confirmed against a real capture), so it's checked first against
+            # the frame already captured for the initial LD detection - this
+            # avoids an unnecessary mouse click+scroll for every occurrence,
+            # which is calibrated for a completely different dialog (the
+            # numbered option list) and risked landing on something in the live
+            # game, making behavior inconsistent between one occurrence and the
+            # next (e.g. the 1st vs 2nd question of the same puzzle).
+            if self._try_auto_solve_puzzle(cfg, self.gm.last_frame, generation):
+                return
+
             can_scroll = cfg.get("dialog_scroll_enabled", True) and self.inp.method != "postmessage"
             target = self._scroll_dialog_target(cfg) if can_scroll else None
             if target is not None:
@@ -211,9 +250,10 @@ class BotEngine:
             if generation != self._lie_detector_generation:
                 return
 
-            # The "jump+left" instruction banner only appears after the dialog has
-            # been scrolled into view, so this check has to happen on the
-            # post-scroll frame above, not the initial (pre-scroll) detection frame.
+            # These variant checks have to happen on the post-scroll frame above
+            # (not the initial pre-scroll detection frame), since the
+            # jump+left/puzzle content only appears once the dialog is scrolled
+            # into view.
             if cfg.get("auto_solve_enabled") and frame is not None and self.jump_left_detector.check_frame(frame):
                 self.lie_detector.auto_solve_jump_left()
                 # Give the game a moment to settle after the move before
@@ -224,6 +264,13 @@ class BotEngine:
                     return
                 confirm_frame = self._capture_full_game_frame()
                 self.telegram.send_photo(confirm_frame, "Auto-solved Jump + Move Left")
+                return
+
+            # Fallback in case the puzzle wasn't fully rendered yet in the
+            # pre-scroll frame checked above - the scroll already happened
+            # above regardless (for the jump+left check), so this doesn't
+            # trigger any additional mouse action.
+            if self._try_auto_solve_puzzle(cfg, frame, generation):
                 return
 
             if cfg.get("telegram_alert_enabled"):
@@ -303,7 +350,8 @@ class BotEngine:
                         # whenever either auto-solve or the Telegram poll could apply - which of
                         # the two actually happens is decided after the scroll+capture, since the
                         # jump+left banner (if any) only appears post-scroll.
-                        if (cfg.get("auto_solve_enabled") or cfg.get("telegram_alert_enabled")) \
+                        if (cfg.get("auto_solve_enabled") or cfg.get("auto_solve_puzzle_enabled")
+                                or cfg.get("telegram_alert_enabled")) \
                                 and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS \
                                 and self._seen_miss_since_trigger:
                             self._trigger_lie_detector_async(cfg)

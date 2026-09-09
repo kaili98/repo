@@ -137,6 +137,34 @@ class LieDetectorFlow:
         finally:
             self._awaiting = False
 
+    def auto_solve_puzzle_click(self, screen_x: int, screen_y: int):
+        """Directly click the answer icon at its on-screen position in the
+        Human Check picture-difference puzzle - the dialog shows a
+        pointer-cursor hint suggesting this is the intended interaction, and
+        it sidesteps any risk of synthetic keyboard presses (Right Arrow x N +
+        Enter) not registering reliably for this specific dialog. No further
+        Telegram interaction needed."""
+        if self._awaiting:
+            return
+        self._awaiting = True
+        self._answered = True  # nothing to answer - not a poll-driven flow
+        try:
+            self.focus_fn()
+            # The dialog needs a beat to become fully interactive - clicking
+            # right away (especially right after the previous step's dialog
+            # just closed) risks landing before the game is ready for it.
+            time.sleep(1.0)
+            self.focus_fn()
+            self.inp.click_at(screen_x, screen_y)
+            # A synthetic (SendInput) click doesn't reliably grant the window
+            # OS focus the way a real click does - re-assert it once more right
+            # after, so normal play (attacking etc.) resumes on a window that's
+            # definitely focused rather than whatever had focus before.
+            time.sleep(0.2)
+            self.focus_fn()
+        finally:
+            self._awaiting = False
+
     def _do_jump_move_left(self):
         """Fixed macro for the 'jump,moveleft' option - dismiss with Enter, jump,
         then hold left to walk off. No further Telegram interaction needed."""
