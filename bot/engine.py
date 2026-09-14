@@ -9,8 +9,10 @@ from bot.repositioner import Repositioner
 from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
-from bot.jump_left_detector import JumpLeftDetector
-from bot.human_check_puzzle import HumanCheckPuzzleSolver, ICON_OFFSETS
+from bot.apple_count_puzzle import AppleCountPuzzleSolver, OPTION_OFFSETS as APPLE_OPTION_OFFSETS, TEXT_CLICK_OFFSET as APPLE_TEXT_CLICK_OFFSET
+from bot.pick_picture_puzzle import PickPicturePuzzleSolver, OPTION_OFFSETS as PICK_OPTION_OFFSETS, TEXT_CLICK_OFFSET as PICK_TEXT_CLICK_OFFSET
+from bot.pick_odd_puzzle import PickOddPuzzleSolver, CLICK_OFFSETS as ODD_CLICK_OFFSETS, TEXT_CLICK_OFFSET as ODD_TEXT_CLICK_OFFSET
+from bot.arithmetic_puzzle import ArithmeticPuzzleSolver, TEXT_CLICK_OFFSET as ARITHMETIC_TEXT_CLICK_OFFSET
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -49,8 +51,10 @@ class BotEngine:
         self.timed = TimedActionManager(self.inp)
         self.gm = GMDetector(self.window)
         self.player_detector = PlayerDetector(self.window)
-        self.jump_left_detector = JumpLeftDetector()
-        self.puzzle_solver = HumanCheckPuzzleSolver()
+        self.apple_count_solver = AppleCountPuzzleSolver()
+        self.pick_picture_solver = PickPicturePuzzleSolver()
+        self.pick_odd_solver = PickOddPuzzleSolver()
+        self.arithmetic_solver = ArithmeticPuzzleSolver()
         self.alarm = Alarm()
         self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
@@ -195,45 +199,240 @@ class BotEngine:
             target=self._capture_and_trigger_lie_detector, args=(cfg, generation), daemon=True
         ).start()
 
-    def _try_auto_solve_puzzle(self, cfg, frame, generation) -> bool:
-        """If the Human Check picture-difference puzzle is in `frame`, solve it
-        and send a confirmation screenshot. Returns True iff it fired (so the
-        caller can skip everything else for this detection)."""
-        if not cfg.get("auto_solve_puzzle_enabled") or frame is None:
-            return False
-        anchor_pos = self.puzzle_solver.locate(frame)
+    def _click_puzzle_answer(self, rect, screen_x, screen_y, generation, caption) -> bool:
+        """Shared click+cleanup+confirm sequence for the puzzle auto-solvers."""
+        self.lie_detector.auto_solve_puzzle_click(screen_x, screen_y)
+        # Move the cursor off the icon row afterward so it doesn't sit on top of
+        # (and visually block) a picture in the confirm screenshot below or the
+        # next step's puzzle detection. The dialog is always centered, so
+        # parking in the window's top-left corner is guaranteed clear of it
+        # regardless of resolution.
+        self.inp.move_mouse(rect[0] + 10, rect[1] + 10)
+        time.sleep(2.0)
+        if generation != self._lie_detector_generation:
+            return True
+        confirm_frame = self._capture_full_game_frame()
+        self.telegram.send_photo(confirm_frame, caption)
+        return True
+
+    def _try_apple_count_puzzle(self, cfg, frame, generation) -> bool:
+        """The "Count the apples" variant. `frame` is expected to already be
+        settled (the click-on-dialog-to-skip-animation step happens once,
+        centrally, in `_capture_and_trigger_lie_detector` before any solver
+        is tried) - this just reads it."""
+        anchor_pos = self.apple_count_solver.locate(frame)
         if anchor_pos is None:
             return False
-        odd_index = self.puzzle_solver.find_odd_icon(frame, anchor_pos)
+        count = self.apple_count_solver.count_icons(frame, anchor_pos)
+        if count is None:
+            return False
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return False
+        dx, dy = APPLE_OPTION_OFFSETS[count - 1]
+        screen_x = rect[0] + anchor_pos[0] + dx
+        screen_y = rect[1] + anchor_pos[1] + dy
+        return self._click_puzzle_answer(
+            rect, screen_x, screen_y, generation,
+            f"Auto-solved Human Check (counted {count} apples, clicked option {count})",
+        )
+
+    def _try_pick_picture_puzzle(self, cfg, frame, generation) -> bool:
+        """The "click the picture that matches this one" variant. `frame` is
+        expected to already be settled (see `_try_apple_count_puzzle`)."""
+        anchor_pos = self.pick_picture_solver.locate(frame)
+        if anchor_pos is None:
+            return False
+        match_index = self.pick_picture_solver.find_matching_option(frame, anchor_pos)
+        if match_index is None:
+            return False
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return False
+        dx, dy = PICK_OPTION_OFFSETS[match_index]
+        screen_x = rect[0] + anchor_pos[0] + dx
+        screen_y = rect[1] + anchor_pos[1] + dy
+        return self._click_puzzle_answer(
+            rect, screen_x, screen_y, generation,
+            f"Auto-solved Human Check (matched picture, clicked option {match_index + 1})",
+        )
+
+    def _try_arithmetic_puzzle(self, cfg, frame, generation) -> bool:
+        """The arithmetic (addition/subtraction) variant. `frame` is expected
+        to already be settled (see `_try_apple_count_puzzle`)."""
+        anchor_pos = self.arithmetic_solver.locate(frame)
+        if anchor_pos is None:
+            return False
+        offset = self.arithmetic_solver.solve(frame, anchor_pos)
+        if offset is None:
+            return False
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return False
+        screen_x = rect[0] + anchor_pos[0] + offset[0]
+        screen_y = rect[1] + anchor_pos[1] + offset[1]
+        return self._click_puzzle_answer(
+            rect, screen_x, screen_y, generation,
+            "Auto-solved Human Check (arithmetic)",
+        )
+
+    def _try_pick_odd_puzzle(self, cfg, frame, generation) -> bool:
+        """The "click the ONE picture that is different" variant (no
+        reference icon shown - compare the options against each other).
+        `frame` is expected to already be settled (see
+        `_try_apple_count_puzzle`)."""
+        anchor_pos = self.pick_odd_solver.locate(frame)
+        if anchor_pos is None:
+            return False
+        odd_index = self.pick_odd_solver.find_odd_icon(frame, anchor_pos)
         if odd_index is None:
             return False
         rect = self.window.get_client_rect_screen()
         if rect is None:
             return False
-        dx, dy = ICON_OFFSETS[odd_index]
+        dx, dy = ODD_CLICK_OFFSETS[odd_index]
         screen_x = rect[0] + anchor_pos[0] + dx
         screen_y = rect[1] + anchor_pos[1] + dy
-        self.lie_detector.auto_solve_puzzle_click(screen_x, screen_y)
-        time.sleep(2.0)
-        if generation != self._lie_detector_generation:
-            return True
-        confirm_frame = self._capture_full_game_frame()
-        self.telegram.send_photo(confirm_frame, f"Auto-solved Human Check puzzle (clicked option {odd_index + 1})")
-        return True
+        return self._click_puzzle_answer(
+            rect, screen_x, screen_y, generation,
+            f"Auto-solved Human Check (picked the odd one out, clicked option {odd_index + 1})",
+        )
+
+    def _try_auto_solve_puzzle(self, cfg, frame, generation) -> bool:
+        """If any auto-solvable Human Check variant is in `frame`, solve it and
+        send a confirmation screenshot. Returns True iff one fired (so the
+        caller can skip everything else for this detection).
+
+        An unexpected exception anywhere in a solver (image-processing/
+        classification code, not yet battle-tested against every real-world
+        capture) is caught here rather than left to propagate - otherwise it
+        would kill this async attempt entirely, skipping both the retry and
+        the failure-notification/poll fallback below it, silently leaving the
+        dialog unanswered with no safety net at all."""
+        if not cfg.get("auto_solve_puzzle_enabled") or frame is None:
+            return False
+        try:
+            if self._try_apple_count_puzzle(cfg, frame, generation):
+                return True
+            if self._try_pick_picture_puzzle(cfg, frame, generation):
+                return True
+            if self._try_pick_odd_puzzle(cfg, frame, generation):
+                return True
+            if self._try_arithmetic_puzzle(cfg, frame, generation):
+                return True
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        return False
+
+    def _locate_puzzle_anchor(self, frame):
+        """Check each of the 4 auto-solvable dialog types' anchors against
+        `frame`, in the same order `_try_auto_solve_puzzle` tries them.
+        Returns (anchor_pos, text_click_offset, label) for whichever one
+        matches, or (None, None, None) if none do - used both to click near
+        the dialog before anything else, and to report what the puzzle type
+        actually was (e.g. for the failure notification)."""
+        if frame is None:
+            return None, None, None
+        pos = self.apple_count_solver.locate(frame)
+        if pos is not None:
+            return pos, APPLE_TEXT_CLICK_OFFSET, "apple counting"
+        pos = self.pick_picture_solver.locate(frame)
+        if pos is not None:
+            return pos, PICK_TEXT_CLICK_OFFSET, "pick-the-picture"
+        pos = self.pick_odd_solver.locate(frame)
+        if pos is not None:
+            return pos, ODD_TEXT_CLICK_OFFSET, "pick-the-odd-one-out"
+        pos = self.arithmetic_solver.locate(frame)
+        if pos is not None:
+            return pos, ARITHMETIC_TEXT_CLICK_OFFSET, "arithmetic"
+        return None, None, None
+
+    def _notify_auto_solve_failed(self, frame, puzzle_type: str):
+        if not self.telegram.enabled:
+            return
+        self.telegram.send_photo(
+            frame,
+            f"Auto-solve failed to answer the '{puzzle_type}' Human Check - sending the poll as a fallback.",
+        )
 
     def _capture_and_trigger_lie_detector(self, cfg, generation):
         try:
-            # The Human Check picture puzzle is fully visible without scrolling
-            # (confirmed against a real capture), so it's checked first against
-            # the frame already captured for the initial LD detection - this
-            # avoids an unnecessary mouse click+scroll for every occurrence,
-            # which is calibrated for a completely different dialog (the
-            # numbered option list) and risked landing on something in the live
-            # game, making behavior inconsistent between one occurrence and the
-            # next (e.g. the 1st vs 2nd question of the same puzzle).
-            if self._try_auto_solve_puzzle(cfg, self.gm.last_frame, generation):
+            frame = self.gm.last_frame
+            rect = self.window.get_client_rect_screen()
+            anchor_pos, text_offset, puzzle_type = (
+                self._locate_puzzle_anchor(frame) if rect is not None else (None, None, None)
+            )
+
+            if anchor_pos is None and rect is not None:
+                # `self.gm.last_frame` is whatever the GM-banner scan last
+                # captured, which can catch one of these 4 dialogs mid-render
+                # (box/banner already up, instruction text not yet drawn at
+                # all) - confirmed from a real capture ("pick the odd-
+                # failed3.jpg") where the anchor matched at 0.996 once
+                # settled, yet the live run fell all the way through to the
+                # generic "unrecognized dialog" poll with no auto-solve
+                # attempted. Give it a moment and recapture once before
+                # concluding this isn't one of the 4 known types.
+                time.sleep(1.0)
+                if generation != self._lie_detector_generation:
+                    return
+                settled = self._capture_full_game_frame()
+                if settled is not None:
+                    frame = settled
+                anchor_pos, text_offset, puzzle_type = self._locate_puzzle_anchor(frame)
+
+            if anchor_pos is not None:
+                # One of the 4 auto-solvable dialog types - click on the
+                # dialog itself (near its anchor) FIRST, before anything
+                # else. This both skips/completes the instruction text's
+                # typewriter animation (confirmed still mid-render on first
+                # detection in real captures, e.g. "All pict...") and makes
+                # sure something actually lands on the dialog rather than
+                # jumping straight to reading a not-yet-settled frame.
+                text_x = rect[0] + anchor_pos[0] + text_offset[0]
+                text_y = rect[1] + anchor_pos[1] + text_offset[1]
+                self.timed._focus_game()
+                self.inp.click_at(text_x, text_y)
+                time.sleep(1.0)
+                if generation != self._lie_detector_generation:
+                    return
+                settled = self._capture_full_game_frame()
+                if settled is not None:
+                    frame = settled
+
+                # Give the user visibility into every occurrence (not just
+                # ones auto-solve fails on) - send the normal screenshot+poll
+                # now, before auto-solve tries to answer it directly.
+                if cfg.get("auto_solve_puzzle_enabled") or cfg.get("telegram_alert_enabled"):
+                    self.lie_detector.trigger([frame])
+                    if generation != self._lie_detector_generation:
+                        return
+                    if cfg.get("auto_solve_puzzle_enabled"):
+                        # About to answer this directly below - close the
+                        # poll just sent (it was for visibility only) so it
+                        # can't be double-answered, and so it doesn't block
+                        # the auto-solver's own click just below
+                        # (auto_solve_puzzle_click no-ops while a poll is
+                        # still awaiting an answer).
+                        self.lie_detector.cancel()
+
+                if self._try_auto_solve_puzzle(cfg, frame, generation):
+                    return
+
+                if cfg.get("auto_solve_puzzle_enabled"):
+                    self._notify_auto_solve_failed(frame, puzzle_type)
+                    # The poll sent above was closed right before this attempt
+                    # (see the cancel() above) since auto-solve was expected to
+                    # answer directly - since it couldn't, re-open a fresh one
+                    # so the user actually has a working fallback to answer,
+                    # instead of pointing them at an already-closed poll.
+                    self.lie_detector.trigger([frame])
                 return
 
+            # None of the 4 known anchors matched - could be an older/other
+            # dialog type (e.g. the numbered "1st option".."8th option" list)
+            # whose options don't all fit on screen without scrolling.
             can_scroll = cfg.get("dialog_scroll_enabled", True) and self.inp.method != "postmessage"
             target = self._scroll_dialog_target(cfg) if can_scroll else None
             if target is not None:
@@ -245,36 +444,26 @@ class BotEngine:
                 if generation != self._lie_detector_generation:
                     return  # dialog closed/reopened while scrolling - stale, drop it
                 frame = self._capture_full_game_frame()
-            else:
-                frame = self.gm.last_frame
             if generation != self._lie_detector_generation:
-                return
-
-            # These variant checks have to happen on the post-scroll frame above
-            # (not the initial pre-scroll detection frame), since the
-            # jump+left/puzzle content only appears once the dialog is scrolled
-            # into view.
-            if cfg.get("auto_solve_enabled") and frame is not None and self.jump_left_detector.check_frame(frame):
-                self.lie_detector.auto_solve_jump_left()
-                # Give the game a moment to settle after the move before
-                # capturing, so the screenshot shows the result of the solve
-                # rather than a mid-walk/mid-transition frame.
-                time.sleep(2.0)
-                if generation != self._lie_detector_generation:
-                    return
-                confirm_frame = self._capture_full_game_frame()
-                self.telegram.send_photo(confirm_frame, "Auto-solved Jump + Move Left")
-                return
-
-            # Fallback in case the puzzle wasn't fully rendered yet in the
-            # pre-scroll frame checked above - the scroll already happened
-            # above regardless (for the jump+left check), so this doesn't
-            # trigger any additional mouse action.
-            if self._try_auto_solve_puzzle(cfg, frame, generation):
                 return
 
             if cfg.get("telegram_alert_enabled"):
                 self.lie_detector.trigger([frame])
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            # Last-resort safety net: something unexpected broke outside the
+            # solvers themselves (scrolling, capturing, etc.) - still try to
+            # give the user a way to respond via the normal poll, rather than
+            # leaving the dialog completely unanswered with nothing sent at
+            # all (which would otherwise leave the bot stuck paused on a
+            # check no one - human or auto-solver - ever got a chance to
+            # answer).
+            try:
+                if cfg.get("auto_solve_puzzle_enabled") or cfg.get("telegram_alert_enabled"):
+                    self.lie_detector.trigger([self.gm.last_frame])
+            except Exception:
+                traceback.print_exc()
         finally:
             self._lie_detector_pending = False
 
@@ -343,17 +532,20 @@ class BotEngine:
                         # flight, and re-arms itself the instant it's answered. Gated on
                         # _gm_detect_streak (unlike the alarm/pause above, which react on the
                         # very first tick) so a lone false-positive blip can't fire a bogus new
-                        # poll on its own, AND on _seen_miss_since_trigger so a resend only
-                        # happens once the dialog has actually been seen to go away (even
-                        # briefly) since the last poll - not just because the previous poll got
-                        # answered while the same dialog was still continuously showing. Fires
-                        # whenever either auto-solve or the Telegram poll could apply - which of
-                        # the two actually happens is decided after the scroll+capture, since the
-                        # jump+left banner (if any) only appears post-scroll.
-                        if (cfg.get("auto_solve_enabled") or cfg.get("auto_solve_puzzle_enabled")
-                                or cfg.get("telegram_alert_enabled")) \
-                                and self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS \
-                                and self._seen_miss_since_trigger:
+                        # poll on its own.
+                        if self._gm_detect_streak >= GM_TRIGGER_CONFIRM_TICKS and (
+                            cfg.get("auto_solve_puzzle_enabled")
+                            # Also required for the plain Telegram-poll path (no auto-solve), so a
+                            # resend only happens once the dialog has actually been seen to go
+                            # away (even briefly) since the last poll - avoids re-pinging a human
+                            # about the same still-open dialog just because they already answered
+                            # it while it kept showing. Auto-solve doesn't have that concern - a
+                            # multi-step check (e.g. the 2nd Human Check question) can replace one
+                            # step with the next without ever registering as absent in between on
+                            # slower hardware, which would otherwise leave it permanently stuck
+                            # waiting for a "miss" that never comes.
+                            or (cfg.get("telegram_alert_enabled") and self._seen_miss_since_trigger)
+                        ):
                             self._trigger_lie_detector_async(cfg)
                     else:
                         self.alarm.stop()

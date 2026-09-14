@@ -8,11 +8,10 @@ SCREENSHOT_CAPTION = "Lie Detector detected!"
 POLL_QUESTION = "Lie Detector detected - pick the answer"
 POLL_OPTIONS = [
     "1st option", "2nd option", "3rd option", "4th option",
-    "5th option", "6th option", "7th option", "jump,moveleft",
+    "5th option", "6th option", "7th option", "8th option",
     "2 Actions: send 2 key names in chat",
     "Others: type your answer in chat",
 ]
-JUMP_MOVE_LEFT_INDEX = 7
 TWO_ACTIONS_INDEX = 8
 OTHERS_INDEX = 9
 
@@ -82,12 +81,6 @@ class LieDetectorFlow:
         if option_index == TWO_ACTIONS_INDEX:
             self._start_two_actions()
             return
-        if option_index == JUMP_MOVE_LEFT_INDEX:
-            try:
-                self._do_jump_move_left()
-            finally:
-                self._awaiting = False
-            return
         try:
             self._submit_downs(option_index)
         finally:
@@ -123,27 +116,10 @@ class LieDetectorFlow:
         finally:
             self._awaiting = False
 
-    def auto_solve_jump_left(self):
-        """Directly perform the 'jump,moveleft' macro (Enter, Space, hold Left
-        1s) without going through Telegram at all - used when auto-solve is
-        enabled and the jump+left LD variant is detected. No-ops if a poll-driven
-        exchange is already in flight."""
-        if self._awaiting:
-            return
-        self._awaiting = True
-        self._answered = True  # nothing to answer - not a poll-driven flow
-        try:
-            self._do_jump_move_left()
-        finally:
-            self._awaiting = False
-
     def auto_solve_puzzle_click(self, screen_x: int, screen_y: int):
-        """Directly click the answer icon at its on-screen position in the
-        Human Check picture-difference puzzle - the dialog shows a
-        pointer-cursor hint suggesting this is the intended interaction, and
-        it sidesteps any risk of synthetic keyboard presses (Right Arrow x N +
-        Enter) not registering reliably for this specific dialog. No further
-        Telegram interaction needed."""
+        """Directly click an answer at its on-screen position - used by the
+        picture/counting/arithmetic auto-solvers to pick an option without
+        going through Telegram. No further Telegram interaction needed."""
         if self._awaiting:
             return
         self._awaiting = True
@@ -164,22 +140,6 @@ class LieDetectorFlow:
             self.focus_fn()
         finally:
             self._awaiting = False
-
-    def _do_jump_move_left(self):
-        """Fixed macro for the 'jump,moveleft' option - dismiss with Enter, jump,
-        then hold left to walk off. No further Telegram interaction needed."""
-        self.focus_fn()
-        self.inp.key_press("enter", 0.05)
-        # The popup->gameplay transition needs a beat before the game actually
-        # registers a jump - a 0.05s gap sometimes dropped the space press
-        # entirely (left still landed since its hold is much longer at 1s).
-        # 0.15s matches the gap already proven reliable for the double-jump
-        # elsewhere in this codebase.
-        time.sleep(0.15)
-        self.focus_fn()
-        self.inp.key_press("space", 0.1)
-        time.sleep(0.15)
-        self._press_key_action("left")
 
     def _press_key_action(self, key_name: str):
         key = key_name.strip().lower()

@@ -10,7 +10,7 @@ def _resource_path(filename: str) -> str:
         base = sys._MEIPASS
     else:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, filename)
+    return os.path.join(base, "images", filename)
 
 class GMDetector:
     """Scans the full game window for any of several nameplate templates (the
@@ -20,7 +20,7 @@ class GMDetector:
     def __init__(self, wm: WindowManager,
                  template_paths: Sequence[str] = (
                      "kin.png", "kuro.png", "viptaxi.png", "humancheck.png",
-                     "human-check-black.png", "anti.png",
+                     "human-check-black.png", "anti.png", "apple-count-anchor.png",
                  ),
                  threshold: float = 0.85):
         self.wm = wm

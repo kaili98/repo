@@ -70,18 +70,12 @@ class SettingsTab(ttk.Frame):
         row(telegram_frame, "Chat ID:", "telegram_chat_id", str, 2, 0)
         row(telegram_frame, "Cooldown (s):", "telegram_cooldown", float, 2, 2)
 
-        self._auto_solve_var = tk.BooleanVar(value=cfg.get("auto_solve_enabled", False))
-        tk.Checkbutton(telegram_frame, text="Auto-Solve 'Jump + Move Left' (skips the Telegram poll for it)",
-                        variable=self._auto_solve_var,
-                        command=lambda: self._save_bool("auto_solve_enabled", self._auto_solve_var.get())
-                        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 0))
-
         self._auto_solve_puzzle_var = tk.BooleanVar(value=cfg.get("auto_solve_puzzle_enabled", False))
         tk.Checkbutton(telegram_frame,
-                        text="Auto-Solve Visual Puzzle (Human Check) [testing - separate from the above]",
+                        text="Auto-Solve Human Check (apple counting, pick-the-picture, arithmetic)",
                         variable=self._auto_solve_puzzle_var,
                         command=lambda: self._save_bool("auto_solve_puzzle_enabled", self._auto_solve_puzzle_var.get())
-                        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 5))
+                        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 5))
 
         scroll_frame = tk.LabelFrame(self, text="Dialog Scroll (for option lists that need scrolling)")
         scroll_frame.pack(fill="x", padx=5, pady=5)

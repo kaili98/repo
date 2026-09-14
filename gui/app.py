@@ -8,8 +8,8 @@ from tkinter import messagebox
 def _resource(filename: str) -> str:
     """Return the correct path for bundled resources (works both frozen and in dev)."""
     if getattr(sys, "frozen", False):
-        return os.path.join(sys._MEIPASS, filename)
-    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), filename)
+        return os.path.join(sys._MEIPASS, "images", filename)
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "images", filename)
 
 try:
     import keyboard as _keyboard

@@ -9,13 +9,13 @@ def _resource_path(filename: str) -> str:
         base = sys._MEIPASS
     else:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, filename)
+    return os.path.join(base, "images", filename)
 
 class PlayerDetector:
     """Scans the same minimap region used for character detection for another
     player's marker (red.png) via template matching."""
 
-    def __init__(self, wm: WindowManager, template_path: str = "red.png", threshold: float = 0.85):
+    def __init__(self, wm: WindowManager, template_path: str = "red.png", threshold: float = 0.97):
         self.wm = wm
         self.threshold = threshold
         self.template = None
