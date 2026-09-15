@@ -53,7 +53,7 @@ class App:
 
         notebook.add(self.main_tab, text="Main")
         notebook.add(self.timed_tab, text="Timed Actions")
-        notebook.add(self.settings_tab, text="Settings")
+        notebook.add(self.settings_tab, text="Setting")
 
         root.update_idletasks()
         width = max(200, root.winfo_width() - 180)
