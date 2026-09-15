@@ -371,19 +371,24 @@ class BotEngine:
                 # `self.gm.last_frame` is whatever the GM-banner scan last
                 # captured, which can catch one of these 4 dialogs mid-render
                 # (box/banner already up, instruction text not yet drawn at
-                # all) - confirmed from a real capture ("pick the odd-
-                # failed3.jpg") where the anchor matched at 0.996 once
-                # settled, yet the live run fell all the way through to the
-                # generic "unrecognized dialog" poll with no auto-solve
-                # attempted. Give it a moment and recapture once before
-                # concluding this isn't one of the 4 known types.
-                time.sleep(1.0)
-                if generation != self._lie_detector_generation:
-                    return
-                settled = self._capture_full_game_frame()
-                if settled is not None:
-                    frame = settled
-                anchor_pos, text_offset, puzzle_type = self._locate_puzzle_anchor(frame)
+                # all) - confirmed from real captures ("pick the odd-
+                # failed3.jpg", "count-the-apple-fail.jpg") where the anchor
+                # matched cleanly once settled, yet the live run fell all the
+                # way through to the generic "unrecognized dialog" poll with
+                # no auto-solve attempted. A single fixed retry wasn't always
+                # enough render-settle time (the 2nd capture attempt could
+                # still land mid-render on a slower client/connection), so
+                # poll a few times instead of checking just once.
+                for _ in range(4):
+                    time.sleep(0.5)
+                    if generation != self._lie_detector_generation:
+                        return
+                    settled = self._capture_full_game_frame()
+                    if settled is not None:
+                        frame = settled
+                    anchor_pos, text_offset, puzzle_type = self._locate_puzzle_anchor(frame)
+                    if anchor_pos is not None:
+                        break
 
             if anchor_pos is not None:
                 # One of the 4 auto-solvable dialog types - click on the
