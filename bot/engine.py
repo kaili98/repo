@@ -1,6 +1,8 @@
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
+import cv2
+import numpy as np
 from bot.config_manager import ConfigManager
 from bot.window_manager import WindowManager
 from bot.char_detector import CharDetector
@@ -10,10 +12,10 @@ from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
 from bot.map_change_detector import MapChangeDetector
-from bot.apple_count_puzzle import AppleCountPuzzleSolver, TEXT_CLICK_OFFSET as APPLE_TEXT_CLICK_OFFSET
-from bot.pick_picture_puzzle import PickPicturePuzzleSolver, TEXT_CLICK_OFFSET as PICK_TEXT_CLICK_OFFSET
-from bot.pick_odd_puzzle import PickOddPuzzleSolver, TEXT_CLICK_OFFSET as ODD_TEXT_CLICK_OFFSET
-from bot.arithmetic_puzzle import ArithmeticPuzzleSolver, TEXT_CLICK_OFFSET as ARITHMETIC_TEXT_CLICK_OFFSET
+from bot.apple_count_puzzle import AppleCountPuzzleSolver
+from bot.pick_picture_puzzle import PickPicturePuzzleSolver
+from bot.pick_odd_puzzle import PickOddPuzzleSolver
+from bot.arithmetic_puzzle import ArithmeticPuzzleSolver
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -37,6 +39,20 @@ MAP_CHECK_INTERVAL = 2.0         # cadence for checking the minimap's map name h
 MAP_CHANGE_CONFIRM_TICKS = 2     # consecutive "different" ticks required before treating this as
                                   # a genuine map change and stopping - guards against a single
                                   # stray/glitched capture (e.g. mid-transition) triggering a stop
+
+# All 4 Human Check dialog types render as the same near-white panel with the
+# same ~356px width - only its on-screen position varies (it isn't fixed;
+# real captures show it shifts with where the player is in the game world),
+# and only the box's WIDTH is a reliable constant across box heights (168 to
+# 250px seen so far, depending on how many lines of content there are).
+DIALOG_BOX_MIN_WIDTH = 320
+DIALOG_BOX_MAX_WIDTH = 390
+DIALOG_BOX_MIN_HEIGHT = 100      # rules out thin unrelated bright strips (HUD bars, etc)
+DIALOG_BOX_BRIGHTNESS_MIN = 235  # panel background is near-white; game art rarely is
+DIALOG_BOX_CLICK_MARGIN = 18     # down from the box's top edge - lands on/near the title
+                                  # line, real captures confirm this stays well clear of
+                                  # any option/button (the closest sits ~80px+ down) at
+                                  # every observed box height
 
 class Status:
     def __init__(self):
@@ -331,25 +347,51 @@ class BotEngine:
     def _locate_puzzle_anchor(self, frame):
         """Check each of the 4 auto-solvable dialog types' anchors against
         `frame`, in the same order `_try_auto_solve_puzzle` tries them.
-        Returns (anchor_pos, text_click_offset, label) for whichever one
-        matches, or (None, None, None) if none do - used both to click near
-        the dialog before anything else, and to report what the puzzle type
-        actually was (e.g. for the failure notification)."""
+        Returns (anchor_pos, label) for whichever one matches, or (None,
+        None) if none do - used to report what the puzzle type actually was
+        (e.g. for the failure notification). Not used for click positioning
+        - see `_locate_dialog_box`, which doesn't need to know the type."""
         if frame is None:
-            return None, None, None
+            return None, None
         pos = self.apple_count_solver.locate(frame)
         if pos is not None:
-            return pos, APPLE_TEXT_CLICK_OFFSET, "apple counting"
+            return pos, "apple counting"
         pos = self.pick_picture_solver.locate(frame)
         if pos is not None:
-            return pos, PICK_TEXT_CLICK_OFFSET, "pick-the-picture"
+            return pos, "pick-the-picture"
         pos = self.pick_odd_solver.locate(frame)
         if pos is not None:
-            return pos, ODD_TEXT_CLICK_OFFSET, "pick-the-odd-one-out"
+            return pos, "pick-the-odd-one-out"
         pos = self.arithmetic_solver.locate(frame)
         if pos is not None:
-            return pos, ARITHMETIC_TEXT_CLICK_OFFSET, "arithmetic"
-        return None, None, None
+            return pos, "arithmetic"
+        return None, None
+
+    @staticmethod
+    def _locate_dialog_box(frame) -> Optional[Tuple[int, int, int, int]]:
+        """Find the Human Check dialog's own near-white background panel,
+        independent of which of the 4 puzzle types it turns out to be -
+        its width is a far more reliable signature than its position (see
+        the module comment). Returns (x, y, w, h) in frame-relative pixels,
+        or None if no blob matching the expected size showed up (e.g. this
+        wasn't actually one of these dialogs, or the frame is stale/blank)."""
+        if frame is None:
+            return None
+        frame_bgr = np.ascontiguousarray(frame[:, :, :3])
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        mask = (gray > DIALOG_BOX_BRIGHTNESS_MIN).astype(np.uint8)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        candidates = [
+            i for i in range(1, n)
+            if DIALOG_BOX_MIN_WIDTH <= stats[i, cv2.CC_STAT_WIDTH] <= DIALOG_BOX_MAX_WIDTH
+            and stats[i, cv2.CC_STAT_HEIGHT] >= DIALOG_BOX_MIN_HEIGHT
+        ]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda i: stats[i, cv2.CC_STAT_AREA])
+        x, y, w, h = stats[best, cv2.CC_STAT_LEFT], stats[best, cv2.CC_STAT_TOP], \
+            stats[best, cv2.CC_STAT_WIDTH], stats[best, cv2.CC_STAT_HEIGHT]
+        return int(x), int(y), int(w), int(h)
 
     def _notify_auto_solve_failed(self, frame, puzzle_type: str):
         if not self.telegram.enabled:
@@ -363,43 +405,26 @@ class BotEngine:
         try:
             frame = self.gm.last_frame
             rect = self.window.get_client_rect_screen()
-            anchor_pos, text_offset, puzzle_type = (
-                self._locate_puzzle_anchor(frame) if rect is not None else (None, None, None)
-            )
+            if rect is None:
+                return
 
-            if anchor_pos is None and rect is not None:
-                # `self.gm.last_frame` is whatever the GM-banner scan last
-                # captured, which can catch one of these 4 dialogs mid-render
-                # (box/banner already up, instruction text not yet drawn at
-                # all) - confirmed from real captures ("pick the odd-
-                # failed3.jpg", "count-the-apple-fail.jpg") where the anchor
-                # matched cleanly once settled, yet the live run fell all the
-                # way through to the generic "unrecognized dialog" poll with
-                # no auto-solve attempted. A single fixed retry wasn't always
-                # enough render-settle time (the 2nd capture attempt could
-                # still land mid-render on a slower client/connection), so
-                # poll a few times instead of checking just once.
-                for _ in range(4):
-                    time.sleep(0.5)
-                    if generation != self._lie_detector_generation:
-                        return
-                    settled = self._capture_full_game_frame()
-                    if settled is not None:
-                        frame = settled
-                    anchor_pos, text_offset, puzzle_type = self._locate_puzzle_anchor(frame)
-                    if anchor_pos is not None:
-                        break
-
-            if anchor_pos is not None:
-                # One of the 4 auto-solvable dialog types - click on the
-                # dialog itself (near its anchor) FIRST, before anything
-                # else. This both skips/completes the instruction text's
-                # typewriter animation (confirmed still mid-render on first
-                # detection in real captures, e.g. "All pict...") and makes
-                # sure something actually lands on the dialog rather than
-                # jumping straight to reading a not-yet-settled frame.
-                text_x = rect[0] + anchor_pos[0] + text_offset[0]
-                text_y = rect[1] + anchor_pos[1] + text_offset[1]
+            # Click on the dialog's own near-white background, near its top,
+            # BEFORE knowing which (if any) of the 4 known puzzle types this
+            # is - this alone skips/completes the instruction text's
+            # typewriter animation, the same way clicking anywhere on the
+            # dialog does. Finding the box this way (instead of via a
+            # solver-specific anchor + per-solver click offset, the old
+            # approach) sidesteps a real bug: the box's background renders
+            # immediately while only the TEXT animates in, so this can be
+            # done right away without waiting on a solver-specific anchor
+            # that requires the (still-animating) text to already be
+            # readable. See `_locate_dialog_box` for why this doesn't need
+            # to know the puzzle type at all.
+            box = self._locate_dialog_box(frame)
+            if box is not None:
+                bx, by, bw, bh = box
+                text_x = rect[0] + bx + bw // 2
+                text_y = rect[1] + by + DIALOG_BOX_CLICK_MARGIN
                 self.timed._focus_game()
                 self.inp.click_at(text_x, text_y)
                 time.sleep(1.0)
@@ -409,6 +434,25 @@ class BotEngine:
                 if settled is not None:
                     frame = settled
 
+            anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
+            if anchor_pos is None:
+                # The box click above should already have forced a full
+                # render on the very next capture, so this is just a safety
+                # net (e.g. a slower click registration) rather than the
+                # primary wait - poll a few more times before concluding
+                # this isn't one of the 4 known types.
+                for _ in range(3):
+                    time.sleep(0.5)
+                    if generation != self._lie_detector_generation:
+                        return
+                    settled = self._capture_full_game_frame()
+                    if settled is not None:
+                        frame = settled
+                    anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
+                    if anchor_pos is not None:
+                        break
+
+            if anchor_pos is not None:
                 # Give the user visibility into every occurrence (not just
                 # ones auto-solve fails on) - send the normal screenshot+poll
                 # now, before auto-solve tries to answer it directly.

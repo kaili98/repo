@@ -51,17 +51,6 @@ MAX_OPTIONS = 6
 TEMPLATE_HALF = 18
 SEARCH_HALF = 24
 
-# Where to click first to skip/complete the instruction text's typewriter
-# animation before analyzing the icons. Same technique proven necessary for
-# the "pick the odd" dialog: real back-to-back "2 of 2" captures
-# (pick-the-picture-failed6/7/8.jpg) showed the second line still mid-render
-# ("All pi", "All pict"), and this dialog's fast-follow second question gives
-# even less settle time than the first. Pushed further right (was x=50) so
-# the click/cursor icon lands past more of the instruction text instead of
-# sitting directly on top of a word; still well clear of REFERENCE_OFFSET's
-# x=234 (a different row anyway - REFERENCE_OFFSET's dy is negative).
-TEXT_CLICK_OFFSET: Tuple[int, int] = (90, 7)
-
 
 class PickPicturePuzzleSolver:
     """Locates the "click the picture that matches this one" dialog via a

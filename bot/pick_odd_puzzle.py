@@ -40,13 +40,6 @@ MAX_ICONS = 6
 TEMPLATE_HALF = 16
 SEARCH_HALF = 22
 
-# Where to click first to skip/complete the instruction text's typewriter
-# animation before analyzing the icons - confirmed necessary from a real
-# capture where the second line was still mid-render ("All pict..."). Pushed
-# further right (was x=50) so the click/cursor icon lands past more of the
-# instruction text instead of sitting directly on top of a word.
-TEXT_CLICK_OFFSET: Tuple[int, int] = (90, 7)
-
 
 class PickOddPuzzleSolver:
     """Locates the "click the ONE picture that is different" dialog via a

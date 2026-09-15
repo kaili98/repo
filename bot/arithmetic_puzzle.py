@@ -64,15 +64,6 @@ OPTION_ROW_HEIGHT = 18
 OPTION_ROW_COUNT = 6
 OPTION_CLUSTER_GAP = 10                # x-gap (px) that separates one option from the next
 BG_THRESHOLD = 15
-
-# Where to click first to skip/complete the instruction text's typewriter
-# animation before reading the equation/options - same technique proven
-# necessary for the other 3 dialog types. Lands within the "Click the
-# answer:" anchor line itself (y=7 of 16px tall), well above EQUATION_REGION
-# (starts at y=16), so it can't land on the equation/options text. Pushed
-# further right (was x=50) - lands just past the end of "answer:" in blank
-# space instead of on top of the word.
-TEXT_CLICK_OFFSET: Tuple[int, int] = (90, 7)
 # Only merge components whose x-ranges actually overlap (e.g. the two strokes
 # of '=' or the curve+dot of '?') - a positive gap here also merged adjacent
 # digits within a 2-digit option (e.g. '1' and '8' in "18"), misreading it as

@@ -27,14 +27,6 @@ ICON_MATCH_THRESHOLD = 0.7
 # guessing any new coordinates, just counting a bit further.
 MAX_APPLES = 6
 
-# Where to click first to skip/complete the instruction text's typewriter
-# animation before counting icons - same technique proven necessary for the
-# "pick the odd" and "pick the picture" dialogs (a real capture showed the
-# full instruction/context not yet displayed on first detection). Pushed
-# further right (was x=50) so the click/cursor icon lands past more of the
-# instruction text instead of sitting directly on top of a word.
-TEXT_CLICK_OFFSET: Tuple[int, int] = (90, 7)
-
 
 class AppleCountPuzzleSolver:
     """Locates the "Count the apples" dialog via a stable anchor crop of its
