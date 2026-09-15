@@ -472,6 +472,27 @@ class BotEngine:
                 if self._try_auto_solve_puzzle(cfg, frame, generation):
                     return
 
+                # A failed solve (anchor matched, but the equation/icons/
+                # options couldn't be read) can still just mean the dialog's
+                # content wasn't fully rendered yet - e.g. a 2nd multi-step
+                # question with more text and less settle time than usual,
+                # or background/postmessage input mode, where the click
+                # above to skip the typewriter animation is a silent no-op
+                # (click_at does nothing under postmessage), so rendering can
+                # only finish by waiting it out. _try_auto_solve_puzzle only
+                # ever presses keys on a successful solve, so retrying here
+                # can't double-answer anything - give it a few more chances
+                # on a fresher capture before giving up.
+                for _ in range(4):
+                    time.sleep(0.7)
+                    if generation != self._lie_detector_generation:
+                        return
+                    settled = self._capture_full_game_frame()
+                    if settled is not None:
+                        frame = settled
+                    if self._try_auto_solve_puzzle(cfg, frame, generation):
+                        return
+
                 if cfg.get("auto_solve_puzzle_enabled"):
                     self._notify_auto_solve_failed(frame, puzzle_type)
                     # The poll sent above was closed right before this attempt
