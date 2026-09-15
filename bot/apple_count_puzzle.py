@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 import numpy as np
 import cv2
 
@@ -11,18 +11,21 @@ def _resource_path(filename: str) -> str:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, "images", filename)
 
-# Offsets (dx, dy) from the anchor's matched top-left, calibrated from a real
-# full-window capture of the "Count the apples (N/2)" dialog
-# (count-the-apple.png, 3 apples shown). The anchor is a crop of the constant
-# instruction line "Count the apples below, then click the matching answer."
-# (skipping the "(N/2)" header, which varies). Options are a VERTICAL list of
-# "1 apple" .. "5 apples", unlike the older counting dialog's horizontal row.
-OPTION_OFFSETS: List[Tuple[int, int]] = [(49, 91), (49, 112), (49, 131), (49, 150), (49, 166)]
+# Offset (dx, dy) of the first apple icon from the anchor's matched
+# top-left, calibrated from a real full-window capture of the "Count the
+# apples (N/2)" dialog (count-the-apple.png, 3 apples shown). The anchor is
+# a crop of the constant instruction line "Count the apples below, then
+# click the matching answer." (skipping the "(N/2)" header, which varies).
 ICON_START_OFFSET: Tuple[int, int] = (15, 37)
 ICON_SPACING = 36
 TEMPLATE_HALF = 17
 SEARCH_HALF = 25
 ICON_MATCH_THRESHOLD = 0.7
+# How many icons to look for at most - answer selection is keyboard-driven
+# (down-arrow N times + enter) since it no longer needs a fixed pixel
+# position for each possible answer, so raising this doesn't require
+# guessing any new coordinates, just counting a bit further.
+MAX_APPLES = 6
 
 # Where to click first to skip/complete the instruction text's typewriter
 # animation before counting icons - same technique proven necessary for the
@@ -77,7 +80,7 @@ class AppleCountPuzzleSolver:
         template = frame_bgr[ty0:ty1, tx0:tx1]
 
         count = 0
-        for i in range(5):
+        for i in range(MAX_APPLES):
             cx = icx + i * ICON_SPACING
             sx0, sy0 = cx - SEARCH_HALF, icy - SEARCH_HALF
             sx1, sy1 = cx + SEARCH_HALF, icy + SEARCH_HALF

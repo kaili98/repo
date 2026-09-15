@@ -27,26 +27,29 @@ def _resource_path(filename: str) -> str:
 # left much less margin for error and is what exposed it.
 REFERENCE_OFFSET: Tuple[int, int] = (236, -2)
 
-# 4 candidate icons side by side on one row (the original/only layout seen
-# until now).
-OPTION_OFFSETS_HORIZONTAL: List[Tuple[int, int]] = [(35, 69), (110, 69), (180, 70), (245, 70)]
-
-# Real captures ("pick the picture-to-test.jpg/2/3.jpg") showed a second
-# layout: 4 icons stacked vertically instead, one per row - the same shift
-# arithmetic's options list and pick-the-odd's icons went through. Measured
-# via connected-component analysis (not eyeballed).
-OPTION_OFFSETS_VERTICAL: List[Tuple[int, int]] = [(40, 72), (40, 100), (40, 129), (40, 157)]
+# This dialog has shown two icon layouts in real captures: 4 candidates side
+# by side on one row, or stacked vertically one per row (the same shift
+# arithmetic's options list and pick-the-odd's icons went through). Option
+# positions are found dynamically (see _locate_icons) rather than assumed at
+# a fixed pitch - pick-the-odd hit a real bug from a fixed vertical pitch
+# (row spacing depends on icon height, so it drifted over multiple rows and
+# corrupted comparisons); locating each icon from its actual pixel content
+# sidesteps that entirely, and scales to more than 4 options for free since
+# answer selection is keyboard-driven (down-arrow N times + enter) rather
+# than needing a precalibrated click position per option.
+#
+# Search region (relative to the anchor) generous enough to contain either
+# layout's full spread for up to MAX_OPTIONS candidates, starting below
+# REFERENCE_OFFSET's own row so it can't ever pick up the reference icon.
+OPTION_SEARCH_REGION: Tuple[int, int, int, int] = (15, 55, 420, 260)  # (x0, y0, x1, y1)
+MIN_ICON_AREA = 120      # real icons run ~250-470px²; the small arrow marker /
+                          # option-number text nearby runs ~15-60px² - well clear
+MAX_ICON_DIMENSION = 40  # real icons run ~22-32px per side - well clear of
+                          # unrelated wide/tall content (chat lines, etc.)
+MAX_OPTIONS = 6
 
 TEMPLATE_HALF = 18
 SEARCH_HALF = 24
-
-# Click point offsets for the vertical layout - a few px below the icon's
-# visual center (verified directly against the real icon shapes: lands
-# solidly inside every one, including the shortest/roundest). The
-# horizontal layout has never needed this adjustment (been working fine
-# clicking its OPTION_OFFSETS_HORIZONTAL position directly), so that one is
-# left alone rather than changing working behavior.
-CLICK_OFFSETS_VERTICAL: List[Tuple[int, int]] = [(dx, dy + 8) for dx, dy in OPTION_OFFSETS_VERTICAL]
 
 # Where to click first to skip/complete the instruction text's typewriter
 # animation before analyzing the icons. Same technique proven necessary for
@@ -92,37 +95,50 @@ class PickPicturePuzzleSolver:
         return max_loc
 
     @staticmethod
-    def _content_score(frame_bgr: np.ndarray, anchor_pos: Tuple[int, int], offset: Tuple[int, int]) -> float:
-        """How much real (non-background) content sits at this icon slot -
-        the dialog background is a near-flat light gray, while an icon is
-        detailed/colorful, so pixel std-dev cleanly tells slot-has-an-icon
-        apart from slot-is-empty-background."""
+    def _locate_icons(frame_bgr: np.ndarray, anchor_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Find where the (up to MAX_OPTIONS) candidate icons actually are,
+        whichever layout is active, by locating real icon-sized blobs rather
+        than assuming a fixed position/pitch for either layout (see the
+        module comment). Returns [(dx, dy), ...] offsets from the anchor,
+        ordered start-to-end along whichever axis they're actually spread
+        across (x for the horizontal layout, y for the vertical one)."""
         ax, ay = anchor_pos
-        cx, cy = ax + offset[0], ay + offset[1]
-        x0, y0 = cx - TEMPLATE_HALF, cy - TEMPLATE_HALF
-        x1, y1 = cx + TEMPLATE_HALF, cy + TEMPLATE_HALF
+        rx0, ry0, rx1, ry1 = OPTION_SEARCH_REGION
         h, w = frame_bgr.shape[:2]
-        if x0 < 0 or y0 < 0 or x1 > w or y1 > h:
-            return -1.0
-        gray = cv2.cvtColor(frame_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
-        return float(gray.std())
+        x0, y0 = max(0, ax + rx0), max(0, ay + ry0)
+        x1, y1 = min(w, ax + rx1), min(h, ay + ry1)
+        if x1 <= x0 or y1 <= y0:
+            return []
 
-    def _detect_layout(self, frame_bgr: np.ndarray, anchor_pos: Tuple[int, int]):
-        """This dialog has shown two different icon layouts in real captures -
-        4 icons side by side on one row, or 4 stacked vertically one per row.
-        Rather than guess which is active, check which candidate position for
-        option 1 actually has real icon content sitting on it (option 0 sits
-        close to the same spot in both layouts, so can't tell them apart)."""
-        h_score = self._content_score(frame_bgr, anchor_pos, OPTION_OFFSETS_HORIZONTAL[1])
-        v_score = self._content_score(frame_bgr, anchor_pos, OPTION_OFFSETS_VERTICAL[1])
-        if v_score > h_score:
-            return OPTION_OFFSETS_VERTICAL, CLICK_OFFSETS_VERTICAL
-        return OPTION_OFFSETS_HORIZONTAL, OPTION_OFFSETS_HORIZONTAL
+        region = frame_bgr[y0:y1, x0:x1]
+        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+        bg = np.median(gray[0:2, :])
+        mask = (np.abs(gray.astype(int) - int(bg)) > 20).astype(np.uint8)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
-    def find_matching_option(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[Tuple[int, Tuple[int, int]]]:
-        """Return (0-based index, click (dx, dy) offset) for the candidate
-        that matches the reference icon, or None if the icons couldn't be
-        cropped."""
+        candidates = []
+        for i in range(1, n):
+            bx, by, bw, bh, area = stats[i]
+            if area < MIN_ICON_AREA or bw > MAX_ICON_DIMENSION or bh > MAX_ICON_DIMENSION:
+                continue
+            candidates.append((x0 + bx + bw // 2 - ax, y0 + by + bh // 2 - ay, area))
+        if len(candidates) < 1:
+            return []
+
+        candidates.sort(key=lambda c: -c[2])
+        candidates = candidates[:MAX_OPTIONS]
+
+        xs = [c[0] for c in candidates]
+        ys = [c[1] for c in candidates]
+        if (max(xs) - min(xs)) >= (max(ys) - min(ys)):
+            candidates.sort(key=lambda c: c[0])
+        else:
+            candidates.sort(key=lambda c: c[1])
+        return [(c[0], c[1]) for c in candidates]
+
+    def find_matching_option(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[int]:
+        """Return the 0-based index of the candidate that matches the
+        reference icon, or None if the icons couldn't be found/cropped."""
         frame_bgr = np.ascontiguousarray(frame[:, :, :3])
         ax, ay = anchor_pos
         h, w = frame_bgr.shape[:2]
@@ -134,7 +150,9 @@ class PickPicturePuzzleSolver:
             return None
         reference = frame_bgr[ry0:ry1, rx0:rx1]
 
-        option_offsets, click_offsets = self._detect_layout(frame_bgr, anchor_pos)
+        option_offsets = self._locate_icons(frame_bgr, anchor_pos)
+        if not option_offsets:
+            return None
 
         best_index = None
         best_score = -1.0
@@ -151,6 +169,4 @@ class PickPicturePuzzleSolver:
                 best_score = max_val
                 best_index = i
 
-        if best_index is None:
-            return None
-        return best_index, click_offsets[best_index]
+        return best_index

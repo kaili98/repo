@@ -54,7 +54,14 @@ OPTIONS_REGION = (10, 53, 170, 64)
 # reading the moment any character in it fails digit classification, and a
 # word like "stakes" fails long before its trailing digit is ever reached.
 OPTION_ROW_HEIGHT = 18
-OPTION_ROW_COUNT = 4
+# How many rows to scan at most (vertical layout only - the horizontal
+# layout has no such cap, it clusters however many groups it finds in its
+# one shared row). Answer selection is keyboard-driven (down-arrow N times +
+# enter), so raising this doesn't require guessing any new pixel positions,
+# just scanning a couple more row-bands - the extra bands safely find no
+# content (and contribute nothing) on any real capture we've seen, which all
+# show exactly 4 options.
+OPTION_ROW_COUNT = 6
 OPTION_CLUSTER_GAP = 10                # x-gap (px) that separates one option from the next
 BG_THRESHOLD = 15
 
@@ -287,9 +294,9 @@ class ArithmeticPuzzleSolver:
                     return a + b if op == "+" else a - b
         return None
 
-    def _read_options(self, frame_bgr: np.ndarray, anchor_pos: Tuple[int, int]) -> List[Tuple[int, Tuple[int, int]]]:
-        """Return [(value, (screen_dx, screen_dy)), ...] for each option read,
-        skipping any that couldn't be read cleanly.
+    def _read_options(self, frame_bgr: np.ndarray, anchor_pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Return [(value, on-screen option index), ...] for each option
+        read, skipping any that couldn't be read cleanly.
 
         Scans up to OPTION_ROW_COUNT row bands rather than one fixed region,
         since this dialog has two different options layouts: 4 options on
@@ -297,7 +304,15 @@ class ArithmeticPuzzleSolver:
         per row stacked vertically (each row band holds exactly one). Both
         are handled by the same per-row clustering - see OPTION_ROW_HEIGHT's
         comment for why scanning row by row (instead of one tall region) is
-        what keeps the "Mistakes left: N" line safe from being misread."""
+        what keeps the "Mistakes left: N" line safe from being misread.
+
+        The option index is `row_i + cluster_i`, not the read option's
+        position in the returned list - the two layouts never both have a
+        nonzero value at once (vertical: row_i varies, exactly one cluster
+        per row; horizontal: row_i is always 0, cluster_i varies), so the
+        sum gives the true on-screen index either way, and stays correct
+        even if some other option earlier in scan order failed to read and
+        got skipped (which would silently shift a plain list-position index)."""
         ax, ay = anchor_pos
         x0, y0, x1, y1 = OPTIONS_REGION
         row_h = y1 - y0
@@ -312,7 +327,7 @@ class ArithmeticPuzzleSolver:
             boxes = _segment_chars(region)
             clusters = _cluster_options(boxes)
 
-            for cluster in clusters:
+            for cluster_i, cluster in enumerate(clusters):
                 digit_str = ""
                 for box in cluster:
                     glyph = _crop_glyph(region, box)
@@ -324,21 +339,19 @@ class ArithmeticPuzzleSolver:
                 if not digit_str:
                     continue
                 value = int(digit_str)
-                cx = (cluster[0][0] + cluster[-1][2]) // 2
-                cy = (cluster[0][1] + cluster[-1][3]) // 2
-                options.append((value, (x0 + cx, band_y0 + cy)))
+                options.append((value, row_i + cluster_i))
         return options
 
-    def solve(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[Tuple[int, int]]:
-        """Return the (dx, dy) offset from the anchor to click for the correct
-        answer, or None if the equation/options couldn't be read or no option
-        matches the computed result."""
+    def solve(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[int]:
+        """Return the 0-based index of the correct answer option, or None if
+        the equation/options couldn't be read or no option matches the
+        computed result."""
         frame_bgr = np.ascontiguousarray(frame[:, :, :3])
         result = self._read_equation(frame_bgr, anchor_pos)
         if result is None:
             return None
         options = self._read_options(frame_bgr, anchor_pos)
-        for value, offset in options:
+        for value, option_index in options:
             if value == result:
-                return offset
+                return option_index
         return None

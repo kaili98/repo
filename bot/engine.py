@@ -10,7 +10,7 @@ from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
 from bot.map_change_detector import MapChangeDetector
-from bot.apple_count_puzzle import AppleCountPuzzleSolver, OPTION_OFFSETS as APPLE_OPTION_OFFSETS, TEXT_CLICK_OFFSET as APPLE_TEXT_CLICK_OFFSET
+from bot.apple_count_puzzle import AppleCountPuzzleSolver, TEXT_CLICK_OFFSET as APPLE_TEXT_CLICK_OFFSET
 from bot.pick_picture_puzzle import PickPicturePuzzleSolver, TEXT_CLICK_OFFSET as PICK_TEXT_CLICK_OFFSET
 from bot.pick_odd_puzzle import PickOddPuzzleSolver, TEXT_CLICK_OFFSET as ODD_TEXT_CLICK_OFFSET
 from bot.arithmetic_puzzle import ArithmeticPuzzleSolver, TEXT_CLICK_OFFSET as ARITHMETIC_TEXT_CLICK_OFFSET
@@ -224,15 +224,16 @@ class BotEngine:
             target=self._capture_and_trigger_lie_detector, args=(cfg, generation), daemon=True
         ).start()
 
-    def _click_puzzle_answer(self, rect, screen_x, screen_y, generation, caption) -> bool:
-        """Shared click+cleanup+confirm sequence for the puzzle auto-solvers."""
-        self.lie_detector.auto_solve_puzzle_click(screen_x, screen_y)
-        # Move the cursor off the icon row afterward so it doesn't sit on top of
-        # (and visually block) a picture in the confirm screenshot below or the
-        # next step's puzzle detection. The dialog is always centered, so
-        # parking in the window's top-left corner is guaranteed clear of it
-        # regardless of resolution.
-        self.inp.move_mouse(rect[0] + 10, rect[1] + 10)
+    def _select_puzzle_answer(self, option_index, generation, caption) -> bool:
+        """Shared select+cleanup+confirm sequence for the puzzle auto-solvers.
+
+        Selects by keyboard (down-arrow `option_index` times, then enter) via
+        LieDetectorFlow.auto_solve_puzzle_select - the option list always
+        starts with option 1 selected, and this is the exact same mechanism
+        an answered Telegram poll already drives (_submit_downs). Replaced an
+        earlier mouse-click version, so this no longer needs to know any
+        option's on-screen position at all."""
+        self.lie_detector.auto_solve_puzzle_select(option_index)
         time.sleep(2.0)
         if generation != self._lie_detector_generation:
             return True
@@ -251,15 +252,9 @@ class BotEngine:
         count = self.apple_count_solver.count_icons(frame, anchor_pos)
         if count is None:
             return False
-        rect = self.window.get_client_rect_screen()
-        if rect is None:
-            return False
-        dx, dy = APPLE_OPTION_OFFSETS[count - 1]
-        screen_x = rect[0] + anchor_pos[0] + dx
-        screen_y = rect[1] + anchor_pos[1] + dy
-        return self._click_puzzle_answer(
-            rect, screen_x, screen_y, generation,
-            f"Auto-solved Human Check (counted {count} apples, clicked option {count})",
+        return self._select_puzzle_answer(
+            count - 1, generation,
+            f"Auto-solved Human Check (counted {count} apples, selected option {count})",
         )
 
     def _try_pick_picture_puzzle(self, cfg, frame, generation) -> bool:
@@ -268,18 +263,12 @@ class BotEngine:
         anchor_pos = self.pick_picture_solver.locate(frame)
         if anchor_pos is None:
             return False
-        result = self.pick_picture_solver.find_matching_option(frame, anchor_pos)
-        if result is None:
+        match_index = self.pick_picture_solver.find_matching_option(frame, anchor_pos)
+        if match_index is None:
             return False
-        match_index, (dx, dy) = result
-        rect = self.window.get_client_rect_screen()
-        if rect is None:
-            return False
-        screen_x = rect[0] + anchor_pos[0] + dx
-        screen_y = rect[1] + anchor_pos[1] + dy
-        return self._click_puzzle_answer(
-            rect, screen_x, screen_y, generation,
-            f"Auto-solved Human Check (matched picture, clicked option {match_index + 1})",
+        return self._select_puzzle_answer(
+            match_index, generation,
+            f"Auto-solved Human Check (matched picture, selected option {match_index + 1})",
         )
 
     def _try_arithmetic_puzzle(self, cfg, frame, generation) -> bool:
@@ -288,16 +277,11 @@ class BotEngine:
         anchor_pos = self.arithmetic_solver.locate(frame)
         if anchor_pos is None:
             return False
-        offset = self.arithmetic_solver.solve(frame, anchor_pos)
-        if offset is None:
+        option_index = self.arithmetic_solver.solve(frame, anchor_pos)
+        if option_index is None:
             return False
-        rect = self.window.get_client_rect_screen()
-        if rect is None:
-            return False
-        screen_x = rect[0] + anchor_pos[0] + offset[0]
-        screen_y = rect[1] + anchor_pos[1] + offset[1]
-        return self._click_puzzle_answer(
-            rect, screen_x, screen_y, generation,
+        return self._select_puzzle_answer(
+            option_index, generation,
             "Auto-solved Human Check (arithmetic)",
         )
 
@@ -309,18 +293,12 @@ class BotEngine:
         anchor_pos = self.pick_odd_solver.locate(frame)
         if anchor_pos is None:
             return False
-        result = self.pick_odd_solver.find_odd_icon(frame, anchor_pos)
-        if result is None:
+        odd_index = self.pick_odd_solver.find_odd_icon(frame, anchor_pos)
+        if odd_index is None:
             return False
-        odd_index, (dx, dy) = result
-        rect = self.window.get_client_rect_screen()
-        if rect is None:
-            return False
-        screen_x = rect[0] + anchor_pos[0] + dx
-        screen_y = rect[1] + anchor_pos[1] + dy
-        return self._click_puzzle_answer(
-            rect, screen_x, screen_y, generation,
-            f"Auto-solved Human Check (picked the odd one out, clicked option {odd_index + 1})",
+        return self._select_puzzle_answer(
+            odd_index, generation,
+            f"Auto-solved Human Check (picked the odd one out, selected option {odd_index + 1})",
         )
 
     def _try_auto_solve_puzzle(self, cfg, frame, generation) -> bool:
@@ -437,8 +415,8 @@ class BotEngine:
                         # About to answer this directly below - close the
                         # poll just sent (it was for visibility only) so it
                         # can't be double-answered, and so it doesn't block
-                        # the auto-solver's own click just below
-                        # (auto_solve_puzzle_click no-ops while a poll is
+                        # the auto-solver's own selection just below
+                        # (auto_solve_puzzle_select no-ops while a poll is
                         # still awaiting an answer).
                         self.lie_detector.cancel()
 

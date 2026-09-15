@@ -24,13 +24,18 @@ def _resource_path(filename: str) -> str:
 # from its actual pixel content sidesteps that entirely.
 #
 # Search region (relative to the anchor) generous enough to contain either
-# layout's full icon spread.
-ICON_SEARCH_REGION: Tuple[int, int, int, int] = (10, 40, 260, 200)  # (x0, y0, x1, y1)
+# layout's full icon spread, sized for up to MAX_ICONS options - answer
+# selection is keyboard-driven (down-arrow N times + enter), so raising
+# MAX_ICONS doesn't require guessing any new pixel positions the way a
+# fixed-offset list would, just widening the net _locate_icons already
+# scans (real icons are still told apart from unrelated content purely by
+# their size, via MIN_ICON_AREA/MAX_ICON_DIMENSION below).
+ICON_SEARCH_REGION: Tuple[int, int, int, int] = (10, 40, 420, 260)  # (x0, y0, x1, y1)
 MIN_ICON_AREA = 120   # real icons run ~250-470px²; the small arrow marker /
                        # option-number text nearby runs ~15-60px² - well clear
 MAX_ICON_DIMENSION = 40  # real icons run ~22-32px per side - well clear of
                           # unrelated wide/tall content (chat lines, etc.)
-MAX_ICONS = 4
+MAX_ICONS = 6
 
 TEMPLATE_HALF = 16
 SEARCH_HALF = 22
@@ -144,15 +149,13 @@ class PickOddPuzzleSolver:
         search_half = min(SEARCH_HALF, max(template_half + 2, min_gap // 2))
         return template_half, search_half
 
-    def find_odd_icon(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[Tuple[int, Tuple[int, int]]]:
-        """Return (0-based index, click (dx, dy) offset) for the icon that
-        looks different from the others, or None if the icon slots couldn't
-        be found/cropped.
-
-        The click offset is each icon's real detected centroid (from
-        _locate_icons), not a separate guess - that's already "the center of
-        the image" the click needs to land on, for whatever shape the icon
-        actually is.
+    def find_odd_icon(self, frame: np.ndarray, anchor_pos: Tuple[int, int]) -> Optional[int]:
+        """Return the 0-based index of the icon that looks different from
+        the others, or None if the icon slots couldn't be found/cropped.
+        Icons are ordered start-to-end along whichever axis they're actually
+        spread across (see _locate_icons), matching the on-screen option
+        numbering, so this index is directly usable for keyboard selection
+        (down-arrow this many times, then enter).
 
         Uses a small local search window per comparison (not just the exact
         icon centers) - a real capture showed two icons of the *same* item
@@ -170,7 +173,11 @@ class PickOddPuzzleSolver:
 
         templates = []
         searches = []
-        used_offsets = []
+        # icon_offsets is already in on-screen option order (see
+        # _locate_icons), and every entry came from within this same frame,
+        # so none should fail the bounds check below - but if one somehow
+        # does, bail entirely rather than silently comparing a shifted subset
+        # under indices that would no longer match the real option numbers.
         for dx, dy in icon_offsets:
             cx, cy = ax + dx, ay + dy
             tx0, ty0 = cx - template_half, cy - template_half
@@ -178,10 +185,9 @@ class PickOddPuzzleSolver:
             sx0, sy0 = cx - search_half, cy - search_half
             sx1, sy1 = cx + search_half, cy + search_half
             if sx0 < 0 or sy0 < 0 or sx1 > w or sy1 > h:
-                continue
+                return None
             templates.append(frame_bgr[ty0:ty1, tx0:tx1])
             searches.append(frame_bgr[sy0:sy1, sx0:sx1])
-            used_offsets.append((dx, dy))
 
         n = len(templates)
         if n < 2:
@@ -198,5 +204,4 @@ class PickOddPuzzleSolver:
                 sims.append(float(max_val))
             avg_similarity.append(sum(sims) / len(sims))
 
-        odd_index = int(np.argmin(avg_similarity))
-        return odd_index, used_offsets[odd_index]
+        return int(np.argmin(avg_similarity))

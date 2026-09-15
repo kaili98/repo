@@ -116,26 +116,31 @@ class LieDetectorFlow:
         finally:
             self._awaiting = False
 
-    def auto_solve_puzzle_click(self, screen_x: int, screen_y: int):
-        """Directly click an answer at its on-screen position - used by the
-        picture/counting/arithmetic auto-solvers to pick an option without
-        going through Telegram. No further Telegram interaction needed."""
+    def auto_solve_puzzle_select(self, option_index: int):
+        """Select an answer by keyboard - the option list always starts with
+        option 1 already selected, so pressing "down" `option_index` times
+        (0-based) then "enter" picks and submits option `option_index + 1`.
+        This is exactly _submit_downs, the same mechanism an answered
+        Telegram poll already drives - used by the picture/counting/
+        arithmetic/odd-one-out auto-solvers to pick an option without going
+        through Telegram, and without needing to know the option's on-screen
+        position at all (replaced an earlier mouse-click version)."""
         if self._awaiting:
             return
         self._awaiting = True
         self._answered = True  # nothing to answer - not a poll-driven flow
         try:
             self.focus_fn()
-            # The dialog needs a beat to become fully interactive - clicking
+            # The dialog needs a beat to become fully interactive - acting
             # right away (especially right after the previous step's dialog
             # just closed) risks landing before the game is ready for it.
             time.sleep(1.0)
-            self.focus_fn()
-            self.inp.click_at(screen_x, screen_y)
-            # A synthetic (SendInput) click doesn't reliably grant the window
-            # OS focus the way a real click does - re-assert it once more right
-            # after, so normal play (attacking etc.) resumes on a window that's
-            # definitely focused rather than whatever had focus before.
+            self._submit_downs(option_index)
+            # A synthetic (SendInput) keypress doesn't reliably grant the
+            # window OS focus the way real input does - re-assert it once
+            # more right after, so normal play (attacking etc.) resumes on a
+            # window that's definitely focused rather than whatever had
+            # focus before.
             time.sleep(0.2)
             self.focus_fn()
         finally:
