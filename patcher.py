@@ -17,7 +17,12 @@ import urllib.error
 import urllib.request
 
 GITHUB_REPO = "kaili98/repo"
-ASSET_NAME = "Telegram Desktop.exe"
+# GitHub silently replaces spaces in uploaded release-asset filenames with
+# dots, so the asset can't be named to match BOT_EXE_NAME exactly - this is
+# a separate, space-free name used only to find the right asset in a
+# release's asset list. The downloaded file is always saved locally as
+# BOT_EXE_NAME regardless of what it was called on GitHub.
+ASSET_NAME = "BotUpdate.exe"
 BOT_EXE_NAME = "Telegram Desktop.exe"
 VERSION_FILE = "version.txt"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
