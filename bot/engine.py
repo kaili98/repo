@@ -470,16 +470,6 @@ class BotEngine:
         finally:
             self._lie_detector_pending = False
 
-    def test_scroll(self) -> bool:
-        """Perform the configured dialog scroll right now, so the position can be
-        visually checked/tuned. Returns False if there's no target window."""
-        cfg = self.config.data
-        target = self._scroll_dialog_target(cfg)
-        if target is None:
-            return False
-        self.inp.scroll_at(target[0], target[1], cfg.get("dialog_scroll_notches", 12))
-        return True
-
     def _detection_loop(self):
         """Runs the anti-bot banner and player-marker scans on their own thread,
         decoupled from the action loop below. Both involve a screen capture plus
