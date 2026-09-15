@@ -9,9 +9,10 @@ from bot.repositioner import Repositioner
 from bot.timed_action_manager import TimedAction, TimedActionManager
 from bot.gm_detector import GMDetector
 from bot.player_detector import PlayerDetector
+from bot.map_change_detector import MapChangeDetector
 from bot.apple_count_puzzle import AppleCountPuzzleSolver, OPTION_OFFSETS as APPLE_OPTION_OFFSETS, TEXT_CLICK_OFFSET as APPLE_TEXT_CLICK_OFFSET
-from bot.pick_picture_puzzle import PickPicturePuzzleSolver, OPTION_OFFSETS as PICK_OPTION_OFFSETS, TEXT_CLICK_OFFSET as PICK_TEXT_CLICK_OFFSET
-from bot.pick_odd_puzzle import PickOddPuzzleSolver, CLICK_OFFSETS as ODD_CLICK_OFFSETS, TEXT_CLICK_OFFSET as ODD_TEXT_CLICK_OFFSET
+from bot.pick_picture_puzzle import PickPicturePuzzleSolver, TEXT_CLICK_OFFSET as PICK_TEXT_CLICK_OFFSET
+from bot.pick_odd_puzzle import PickOddPuzzleSolver, TEXT_CLICK_OFFSET as ODD_TEXT_CLICK_OFFSET
 from bot.arithmetic_puzzle import ArithmeticPuzzleSolver, TEXT_CLICK_OFFSET as ARITHMETIC_TEXT_CLICK_OFFSET
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
@@ -32,6 +33,11 @@ GM_TRIGGER_CONFIRM_TICKS = 2     # consecutive "detected" ticks required before 
 
 PLAYER_CHECK_INTERVAL = 1.0      # cadence for scanning the minimap for other players
 
+MAP_CHECK_INTERVAL = 2.0         # cadence for checking the minimap's map name hasn't changed
+MAP_CHANGE_CONFIRM_TICKS = 2     # consecutive "different" ticks required before treating this as
+                                  # a genuine map change and stopping - guards against a single
+                                  # stray/glitched capture (e.g. mid-transition) triggering a stop
+
 class Status:
     def __init__(self):
         self.running = False
@@ -51,6 +57,7 @@ class BotEngine:
         self.timed = TimedActionManager(self.inp)
         self.gm = GMDetector(self.window)
         self.player_detector = PlayerDetector(self.window)
+        self.map_detector = MapChangeDetector(self.window)
         self.apple_count_solver = AppleCountPuzzleSolver()
         self.pick_picture_solver = PickPicturePuzzleSolver()
         self.pick_odd_solver = PickOddPuzzleSolver()
@@ -76,6 +83,8 @@ class BotEngine:
         self._last_double_jump = time.time()
         self._last_player_check = 0.0
         self._player_alarm_until = 0.0
+        self._last_map_check = 0.0
+        self._map_change_streak = 0
         self._apply_config()
 
     def _apply_config(self):
@@ -130,6 +139,8 @@ class BotEngine:
         self._idle_baseline_x = None
         self._idle_since = time.time()
         self._last_double_jump = time.time()
+        self.map_detector.reset()
+        self._map_change_streak = 0
 
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -143,6 +154,20 @@ class BotEngine:
         self.alarm.stop()
         self.player_alarm.stop()
         self._player_alarm_until = 0.0
+
+    def _on_map_changed(self):
+        """Safety stop: the minimap's map-name text no longer matches the
+        baseline snapshot taken when the bot last started, meaning the
+        character is now on a different map - could be a legitimate manual
+        move, a teleport/kick, or something else entirely. Either way the
+        bot has no business continuing to attack/reposition on autopilot in
+        a location it never confirmed, so it stops and lets the user decide
+        rather than assume it's fine."""
+        self.stop()
+        self.status.state = "Stopped - map changed"
+        if self.telegram.enabled:
+            frame = self._capture_full_game_frame()
+            self.telegram.send_photo(frame, "Map changed - bot stopped for safety.")
 
     def idle_countdown(self) -> Optional[float]:
         """Seconds until the next idle move fires, or None if disabled."""
@@ -243,13 +268,13 @@ class BotEngine:
         anchor_pos = self.pick_picture_solver.locate(frame)
         if anchor_pos is None:
             return False
-        match_index = self.pick_picture_solver.find_matching_option(frame, anchor_pos)
-        if match_index is None:
+        result = self.pick_picture_solver.find_matching_option(frame, anchor_pos)
+        if result is None:
             return False
+        match_index, (dx, dy) = result
         rect = self.window.get_client_rect_screen()
         if rect is None:
             return False
-        dx, dy = PICK_OPTION_OFFSETS[match_index]
         screen_x = rect[0] + anchor_pos[0] + dx
         screen_y = rect[1] + anchor_pos[1] + dy
         return self._click_puzzle_answer(
@@ -284,13 +309,13 @@ class BotEngine:
         anchor_pos = self.pick_odd_solver.locate(frame)
         if anchor_pos is None:
             return False
-        odd_index = self.pick_odd_solver.find_odd_icon(frame, anchor_pos)
-        if odd_index is None:
+        result = self.pick_odd_solver.find_odd_icon(frame, anchor_pos)
+        if result is None:
             return False
+        odd_index, (dx, dy) = result
         rect = self.window.get_client_rect_screen()
         if rect is None:
             return False
-        dx, dy = ODD_CLICK_OFFSETS[odd_index]
         screen_x = rect[0] + anchor_pos[0] + dx
         screen_y = rect[1] + anchor_pos[1] + dy
         return self._click_puzzle_answer(
@@ -564,6 +589,21 @@ class BotEngine:
                 if self._player_alarm_until and t0 >= self._player_alarm_until:
                     self.player_alarm.stop()
                     self._player_alarm_until = 0.0
+
+                if cfg.get("map_change_detect_enabled", True) and t0 - self._last_map_check >= MAP_CHECK_INTERVAL:
+                    self._last_map_check = t0
+                    if self.map_detector.baseline is None:
+                        # First tick after start() (or after a capture failure) -
+                        # establish what "the current map" looks like before any
+                        # comparison can happen.
+                        self.map_detector.set_baseline()
+                    elif self.map_detector.changed():
+                        self._map_change_streak += 1
+                        if self._map_change_streak >= MAP_CHANGE_CONFIRM_TICKS:
+                            self._on_map_changed()
+                            continue
+                    else:
+                        self._map_change_streak = 0
 
                 time.sleep(0.05)
         except Exception:

@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
     "double_jump_interval": 40.0,
     "player_detect_enabled": False,
     "player_alarm_duration": 3.0,
+    "map_change_detect_enabled": True,
     "dialog_scroll_enabled": True,
     "dialog_scroll_x": 810,
     "dialog_scroll_y": 286,

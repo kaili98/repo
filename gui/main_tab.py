@@ -167,6 +167,16 @@ class MainTab(ttk.Frame):
                         ).pack(pady=(5, 0))
         tk.Label(player_frame, text="When enabled, bot checks for other players.", fg="gray").pack(pady=(0, 5))
 
+        # ---- Map Change Detection ----
+        map_frame = tk.LabelFrame(self, text="Map Change Detection")
+        map_frame.pack(fill="x", padx=5, pady=5)
+        self._map_change_var = tk.BooleanVar(value=data.get("map_change_detect_enabled", True))
+        tk.Checkbutton(map_frame, text="Stop the bot if the map changes", variable=self._map_change_var,
+                        command=lambda: self._save_bool("map_change_detect_enabled", self._map_change_var.get())
+                        ).pack(pady=(5, 0))
+        tk.Label(map_frame, text="Snapshots the minimap's map name on start; stops the bot if it ever differs.",
+                 fg="gray").pack(pady=(0, 5))
+
         self._refresh_windows()
 
     # ---- Window targeting ----
