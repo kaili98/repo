@@ -40,6 +40,19 @@ MAX_ICONS = 6
 TEMPLATE_HALF = 16
 SEARCH_HALF = 22
 
+# The odd-one-out is picked via plain argmin over average pairwise
+# similarity, with no floor on how confident that has to be - measured
+# across every real capture on hand, a genuine odd-one-out always has a
+# similarity gap of at least ~0.40 to the runner-up (the "same" icons
+# cluster around 0.7-0.8, the real outlier around 0.14-0.40). One capture
+# ("pick the odd-failed3.jpg") picked up 2 spurious extra candidates
+# (likely nearby UI icons within the generous search region) and produced
+# two near-tied low scores (0.142 vs 0.145, a 0.003 gap) - it still landed
+# on the right answer, but only by luck, not confidence. Requiring a
+# minimum gap catches exactly that ambiguous case (falls back to None) while
+# every genuine single-outlier capture clears it with huge margin.
+MIN_CONFIDENCE_GAP = 0.2
+
 
 class PickOddPuzzleSolver:
     """Locates the "click the ONE picture that is different" dialog via a
@@ -197,4 +210,13 @@ class PickOddPuzzleSolver:
                 sims.append(float(max_val))
             avg_similarity.append(sum(sims) / len(sims))
 
-        return int(np.argmin(avg_similarity))
+        order = np.argsort(avg_similarity)
+        winner, runner_up = avg_similarity[order[0]], avg_similarity[order[1]]
+        if runner_up - winner < MIN_CONFIDENCE_GAP:
+            # Too ambiguous to trust - could be a genuinely close call, a
+            # still-rendering icon throwing off one comparison, or spurious
+            # extra candidates (see MIN_CONFIDENCE_GAP's comment) diluting
+            # the real signal. A wrong-but-plausible-looking answer here is
+            # worse than falling back to the retry loop/generic poll.
+            return None
+        return int(order[0])

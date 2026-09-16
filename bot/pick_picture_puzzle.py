@@ -51,6 +51,16 @@ MAX_OPTIONS = 6
 TEMPLATE_HALF = 18
 SEARCH_HALF = 24
 
+# The matching option is picked via plain argmax over template-match score,
+# with no floor on how confident that has to be - measured across every
+# real capture on hand, the genuine match always scores >=0.774, while the
+# best wrong candidate never exceeds 0.448. A large margin between those two
+# clusters, so requiring the winner to clear this floor rejects an ambiguous
+# or still-rendering read (which would otherwise still confidently return
+# whichever option happened to score highest, even if none of them actually
+# looked like the reference) without ever rejecting a real match.
+MIN_MATCH_SCORE = 0.6
+
 
 class PickPicturePuzzleSolver:
     """Locates the "click the picture that matches this one" dialog via a
@@ -158,4 +168,10 @@ class PickPicturePuzzleSolver:
                 best_score = max_val
                 best_index = i
 
+        if best_score < MIN_MATCH_SCORE:
+            # Too weak to trust - every real match on hand scores well
+            # above this (see MIN_MATCH_SCORE's comment), so a winner this
+            # low means none of the candidates actually looked like the
+            # reference (e.g. a still-rendering icon), not a genuine match.
+            return None
         return best_index
