@@ -420,7 +420,27 @@ class BotEngine:
             # that requires the (still-animating) text to already be
             # readable. See `_locate_dialog_box` for why this doesn't need
             # to know the puzzle type at all.
-            box = self._locate_dialog_box(frame)
+            box = None
+            for _ in range(4):
+                box = self._locate_dialog_box(frame)
+                if box is not None:
+                    break
+                time.sleep(0.3)
+                if generation != self._lie_detector_generation:
+                    return
+                settled = self._capture_full_game_frame()
+                if settled is not None:
+                    frame = settled
+
+            # Only ever scan for/solve one of the 4 known puzzle types AFTER
+            # the click above has actually happened, never on a frame that
+            # was never clicked - reading the equation/icons before that
+            # click has had a chance to force a full render risks a
+            # confidently-wrong answer (e.g. reading a 2nd multi-step
+            # question mid-transition from the 1st), which is worse than
+            # just missing the auto-solve window and falling back to the
+            # generic dialog handling below.
+            anchor_pos, puzzle_type = None, None
             if box is not None:
                 bx, by, bw, bh = box
                 text_x = rect[0] + bx + bw // 2
@@ -434,23 +454,23 @@ class BotEngine:
                 if settled is not None:
                     frame = settled
 
-            anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
-            if anchor_pos is None:
-                # The box click above should already have forced a full
-                # render on the very next capture, so this is just a safety
-                # net (e.g. a slower click registration) rather than the
-                # primary wait - poll a few more times before concluding
-                # this isn't one of the 4 known types.
-                for _ in range(3):
-                    time.sleep(0.5)
-                    if generation != self._lie_detector_generation:
-                        return
-                    settled = self._capture_full_game_frame()
-                    if settled is not None:
-                        frame = settled
-                    anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
-                    if anchor_pos is not None:
-                        break
+                anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
+                if anchor_pos is None:
+                    # The box click above should already have forced a full
+                    # render on the very next capture, so this is just a
+                    # safety net (e.g. a slower click registration) rather
+                    # than the primary wait - poll a few more times before
+                    # concluding this isn't one of the 4 known types.
+                    for _ in range(3):
+                        time.sleep(0.5)
+                        if generation != self._lie_detector_generation:
+                            return
+                        settled = self._capture_full_game_frame()
+                        if settled is not None:
+                            frame = settled
+                        anchor_pos, puzzle_type = self._locate_puzzle_anchor(frame)
+                        if anchor_pos is not None:
+                            break
 
             if anchor_pos is not None:
                 # Give the user visibility into every occurrence (not just
