@@ -21,6 +21,7 @@ class GMDetector:
                  template_paths: Sequence[str] = (
                      "kin.png", "kuro.png", "viptaxi.png", "humancheck.png",
                      "human-check-black.png", "anti.png", "apple-count-anchor.png",
+                     "ld-timer.jpg",
                  ),
                  threshold: float = 0.85):
         self.wm = wm

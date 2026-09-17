@@ -16,6 +16,7 @@ from bot.apple_count_puzzle import AppleCountPuzzleSolver
 from bot.pick_picture_puzzle import PickPicturePuzzleSolver
 from bot.pick_odd_puzzle import PickOddPuzzleSolver
 from bot.arithmetic_puzzle import ArithmeticPuzzleSolver
+from bot.ring_line_puzzle import RingLinePuzzleSolver
 from bot.alarm import Alarm
 from bot.telegram_notifier import TelegramNotifier
 from bot.lie_detector import LieDetectorFlow
@@ -39,6 +40,14 @@ MAP_CHECK_INTERVAL = 2.0         # cadence for checking the minimap's map name h
 MAP_CHANGE_CONFIRM_TICKS = 2     # consecutive "different" ticks required before treating this as
                                   # a genuine map change and stopping - guards against a single
                                   # stray/glitched capture (e.g. mid-transition) triggering a stop
+
+RING_LINE_CHECK_INTERVAL = 0.7   # cadence for scanning for the "click the line through the
+                                  # ring" Verification dialog - a wholly different UI from the
+                                  # 4 Human Check types (dark themed, no nameplate icon), so it
+                                  # isn't discovered via gm.check()/_trigger_lie_detector_async
+                                  # and gets its own independent scan here instead
+RING_LINE_CLICK_COOLDOWN = 2.5   # after clicking a guess, don't click again until the game has
+                                  # had a chance to react (advance to the next attempt, or close)
 
 # All 4 Human Check dialog types render as the same near-white panel with the
 # same ~356px width - only its on-screen position varies (it isn't fixed;
@@ -78,6 +87,7 @@ class BotEngine:
         self.pick_picture_solver = PickPicturePuzzleSolver()
         self.pick_odd_solver = PickOddPuzzleSolver()
         self.arithmetic_solver = ArithmeticPuzzleSolver()
+        self.ring_line_solver = RingLinePuzzleSolver()
         self.alarm = Alarm()
         self.player_alarm = Alarm()
         self.telegram = TelegramNotifier()
@@ -101,6 +111,9 @@ class BotEngine:
         self._player_alarm_until = 0.0
         self._last_map_check = 0.0
         self._map_change_streak = 0
+        self._last_ring_line_check = 0.0
+        self._ring_line_last_click = 0.0
+        self._ring_line_notified = False
         self._apply_config()
 
     def _apply_config(self):
@@ -393,6 +406,55 @@ class BotEngine:
             stats[best, cv2.CC_STAT_WIDTH], stats[best, cv2.CC_STAT_HEIGHT]
         return int(x), int(y), int(w), int(h)
 
+    def _check_ring_line_puzzle(self, cfg):
+        """Scan for the "click the line through the ring" Verification
+        dialog and click the answer directly - independent of the Human
+        Check pipeline above (see RING_LINE_CHECK_INTERVAL for why). Gated
+        on the same auto_solve_puzzle_enabled toggle as the other 4
+        auto-solvers.
+
+        Unlike those, a wrong click here visibly costs one of only 3
+        attempts, so this never guesses: if the ring or the line through it
+        isn't confidently identified, it just alerts once (rather than
+        every tick) via Telegram so a human can solve it manually, the same
+        safety-net role _notify_auto_solve_failed plays for the other
+        puzzle types."""
+        if not cfg.get("auto_solve_puzzle_enabled"):
+            return
+        frame = self._capture_full_game_frame()
+        anchor_pos = self.ring_line_solver.locate(frame)
+        if anchor_pos is None:
+            self._ring_line_notified = False
+            return
+
+        if time.time() - self._ring_line_last_click < RING_LINE_CLICK_COOLDOWN:
+            return
+
+        point = self.ring_line_solver.find_click_point(frame, anchor_pos)
+        if point is None:
+            if not self._ring_line_notified and self.telegram.enabled:
+                self._ring_line_notified = True
+                self.telegram.send_photo(
+                    frame,
+                    "Verification check detected (click the line through the ring), but "
+                    "couldn't confidently tell which line - please solve it manually.",
+                )
+            return
+
+        rect = self.window.get_client_rect_screen()
+        if rect is None:
+            return
+        px, py = point
+        self.timed._focus_game()
+        self.inp.click_at(rect[0] + px, rect[1] + py)
+        self._ring_line_last_click = time.time()
+        self._ring_line_notified = False
+
+        if self.telegram.enabled:
+            time.sleep(0.5)
+            confirm_frame = self._capture_full_game_frame()
+            self.telegram.send_photo(confirm_frame, "Auto-solved Verification check (clicked the line through the ring)")
+
     def _notify_auto_solve_failed(self, frame, puzzle_type: str):
         if not self.telegram.enabled:
             return
@@ -662,6 +724,10 @@ class BotEngine:
                             continue
                     else:
                         self._map_change_streak = 0
+
+                if t0 - self._last_ring_line_check >= RING_LINE_CHECK_INTERVAL:
+                    self._last_ring_line_check = t0
+                    self._check_ring_line_puzzle(cfg)
 
                 time.sleep(0.05)
         except Exception:
