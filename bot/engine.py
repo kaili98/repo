@@ -1,3 +1,4 @@
+import random
 import threading
 import time
 from typing import Callable, Optional, Tuple
@@ -48,6 +49,9 @@ RING_LINE_CHECK_INTERVAL = 0.7   # cadence for scanning for the "click the line 
                                   # and gets its own independent scan here instead
 RING_LINE_CLICK_COOLDOWN = 2.5   # after clicking a guess, don't click again until the game has
                                   # had a chance to react (advance to the next attempt, or close)
+
+DOUBLE_JUMP_INTERVAL_JITTER = 5.0  # +/- seconds randomized onto double_jump_interval each time,
+                                    # so jumps don't land on an exact, bot-obvious fixed cadence
 
 # All 4 Human Check dialog types render as the same near-white panel with the
 # same ~356px width - only its on-screen position varies (it isn't fixed;
@@ -107,6 +111,7 @@ class BotEngine:
         self._lie_detector_pending = False
         self._seen_miss_since_trigger = True  # allow the very first trigger unconditionally
         self._last_double_jump = time.time()
+        self._double_jump_next_interval = self._roll_double_jump_interval()
         self._last_player_check = 0.0
         self._player_alarm_until = 0.0
         self._last_map_check = 0.0
@@ -168,6 +173,7 @@ class BotEngine:
         self._idle_baseline_x = None
         self._idle_since = time.time()
         self._last_double_jump = time.time()
+        self._double_jump_next_interval = self._roll_double_jump_interval()
         self.map_detector.reset()
         self._map_change_streak = 0
 
@@ -183,6 +189,17 @@ class BotEngine:
         self.alarm.stop()
         self.player_alarm.stop()
         self._player_alarm_until = 0.0
+
+    def _roll_double_jump_interval(self) -> float:
+        """Randomize the configured double_jump_interval by +/-
+        DOUBLE_JUMP_INTERVAL_JITTER seconds, re-rolled after every jump -
+        a perfectly fixed cadence is one of the easier tells for a script,
+        so this keeps the gap between jumps from ever being exactly
+        the same twice. Floored well above 0 so a small configured
+        interval combined with unlucky jitter can't fire jumps back to back."""
+        base = self.config.data.get("double_jump_interval", 40.0)
+        jitter = random.uniform(-DOUBLE_JUMP_INTERVAL_JITTER, DOUBLE_JUMP_INTERVAL_JITTER)
+        return max(1.0, base + jitter)
 
     def _on_map_changed(self):
         """Safety stop: the minimap's map-name text no longer matches the
@@ -783,7 +800,7 @@ class BotEngine:
                         continue
 
                 if cfg.get("double_jump_enabled") and \
-                        time.time() - self._last_double_jump >= cfg.get("double_jump_interval", 40.0):
+                        time.time() - self._last_double_jump >= self._double_jump_next_interval:
                     self.status.state = "Double Jump"
                     if not cfg["background_mode"]:
                         self.timed._focus_game()
@@ -791,6 +808,7 @@ class BotEngine:
                     time.sleep(0.15)
                     self.inp.key_press("space", 0.05)
                     self._last_double_jump = time.time()
+                    self._double_jump_next_interval = self._roll_double_jump_interval()
                     self._last_attack = time.time()
                     continue
 
