@@ -112,6 +112,7 @@ class BotEngine:
         self._seen_miss_since_trigger = True  # allow the very first trigger unconditionally
         self._last_double_jump = time.time()
         self._double_jump_next_interval = self._roll_double_jump_interval()
+        self._attack_held_key = None  # which key (if any) is currently held down for attacking
         self._last_player_check = 0.0
         self._player_alarm_until = 0.0
         self._last_map_check = 0.0
@@ -189,6 +190,7 @@ class BotEngine:
         self.alarm.stop()
         self.player_alarm.stop()
         self._player_alarm_until = 0.0
+        self._release_attack_key()
 
     def _roll_double_jump_interval(self) -> float:
         """Randomize the configured double_jump_interval by +/-
@@ -200,6 +202,17 @@ class BotEngine:
         base = self.config.data.get("double_jump_interval", 40.0)
         jitter = random.uniform(-DOUBLE_JUMP_INTERVAL_JITTER, DOUBLE_JUMP_INTERVAL_JITTER)
         return max(1.0, base + jitter)
+
+    def _release_attack_key(self):
+        """Let go of the main attack key if it's currently being held down.
+        The attack key is held continuously (see the attack branch in
+        _loop) rather than tapped, so every other action that needs the
+        keyboard (movement, buffs, double jump, idle move, a GM/anti-bot
+        pause, stopping) must release it first - otherwise it stays
+        physically down underneath whatever key that action presses."""
+        if self._attack_held_key is not None:
+            self.inp.key_up(self._attack_held_key)
+            self._attack_held_key = None
 
     def _on_map_changed(self):
         """Safety stop: the minimap's map-name text no longer matches the
@@ -764,6 +777,7 @@ class BotEngine:
 
                 if not self.window.is_valid():
                     self.status.state = "No window"
+                    self._release_attack_key()
                     time.sleep(0.5)
                     continue
 
@@ -773,6 +787,7 @@ class BotEngine:
                     # on-screen banner itself has already cleared - so normal play doesn't
                     # resume out from under a reply you haven't finished sending yet.
                     self.status.state = "GM / ANTI-BOT CHECK - PAUSED"
+                    self._release_attack_key()
                     time.sleep(0.2)
                     continue
 
@@ -790,6 +805,7 @@ class BotEngine:
 
                     if now - self._idle_since >= cfg["idle_move_every"]:
                         self.status.state = "Idle Move"
+                        self._release_attack_key()
                         self.timed._focus_game()
                         r = self.repositioner
                         idle_key = r.facing_r_key if r.preferred_facing == "right" else r.facing_l_key
@@ -802,6 +818,7 @@ class BotEngine:
                 if cfg.get("double_jump_enabled") and \
                         time.time() - self._last_double_jump >= self._double_jump_next_interval:
                     self.status.state = "Double Jump"
+                    self._release_attack_key()
                     if not cfg["background_mode"]:
                         self.timed._focus_game()
                     self.inp.key_press("space", 0.05)
@@ -814,6 +831,7 @@ class BotEngine:
 
                 if self.timed.any_ready():
                     self.status.state = "Buffing"
+                    self._release_attack_key()
                     self.timed.check_and_execute()
                     continue
 
@@ -821,13 +839,23 @@ class BotEngine:
                     direction = self.repositioner.check_direction()
                     if direction and not self.repositioner.is_repositioning:
                         self.status.state = f"Repositioning {direction}"
+                        self._release_attack_key()
                         self.repositioner.do_reposition(direction)
                         continue
 
                 if time.time() - self._last_attack >= cfg["attack_interval"]:
                     if not cfg["background_mode"]:
                         self.timed._focus_game()
-                    self.inp.key_press(cfg["attack_key"], 0.05)
+                    # Held down rather than tapped - some attack skills need the
+                    # key to stay physically down to keep hitting/channeling.
+                    # Only actually sends a key-down once (the first tick this
+                    # fires after being released elsewhere); after that the key
+                    # is already held, so later ticks just refresh bookkeeping.
+                    attack_key = cfg["attack_key"]
+                    if self._attack_held_key != attack_key:
+                        self._release_attack_key()
+                        self.inp.key_down(attack_key)
+                        self._attack_held_key = attack_key
                     self._last_attack = time.time()
                     self.status.state = "Attacking"
 
@@ -840,6 +868,7 @@ class BotEngine:
             traceback.print_exc()
             self.status.state = f"Error: {e}"
         finally:
+            self._release_attack_key()
             self.alarm.stop()
             if not self.status.state.startswith("Error"):
                 self.status.state = "Stopped"
