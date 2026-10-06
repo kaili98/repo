@@ -846,20 +846,24 @@ class BotEngine:
                 if time.time() - self._last_attack >= cfg["attack_interval"]:
                     if not cfg["background_mode"]:
                         self.timed._focus_game()
-                    # Held down rather than tapped - some attack skills need the
-                    # key to stay physically down to keep hitting/channeling.
-                    # A synthetic key-down is a one-shot event, not a simulated
-                    # physically-held key, so Windows never generates the
-                    # repeated WM_KEYDOWN messages a real hold produces - and
-                    # some games key their attack off that repeat signal, not
-                    # just raw key state. So key-down is re-sent every tick
-                    # while attacking (never interleaved with a key-up, so it
-                    # still reads as one continuous hold) instead of once.
                     attack_key = cfg["attack_key"]
-                    if self._attack_held_key != attack_key:
+                    if cfg.get("attack_mode", "hold") == "tap":
                         self._release_attack_key()
-                        self._attack_held_key = attack_key
-                    self.inp.key_down(attack_key)
+                        self.inp.key_press(attack_key, 0.05)
+                    else:
+                        # Held down rather than tapped - some attack skills need the
+                        # key to stay physically down to keep hitting/channeling.
+                        # A synthetic key-down is a one-shot event, not a simulated
+                        # physically-held key, so Windows never generates the
+                        # repeated WM_KEYDOWN messages a real hold produces - and
+                        # some games key their attack off that repeat signal, not
+                        # just raw key state. So key-down is re-sent every tick
+                        # while attacking (never interleaved with a key-up, so it
+                        # still reads as one continuous hold) instead of once.
+                        if self._attack_held_key != attack_key:
+                            self._release_attack_key()
+                            self._attack_held_key = attack_key
+                        self.inp.key_down(attack_key)
                     self._last_attack = time.time()
                     self.status.state = "Attacking"
 

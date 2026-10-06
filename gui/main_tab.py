@@ -82,6 +82,12 @@ class MainTab(ttk.Frame):
         self._atk_key.pack(side="left", padx=2, pady=5)
         self._atk_key.bind("<FocusOut>", lambda e: self._save_field("attack_key", self._atk_key.get()))
 
+        self._atk_mode_var = tk.StringVar(value=data.get("attack_mode", "hold"))
+        tk.Radiobutton(attack_frame, text="Hold", variable=self._atk_mode_var, value="hold",
+                        command=self._on_attack_mode_change).pack(side="left", padx=(15, 2), pady=5)
+        tk.Radiobutton(attack_frame, text="Tap", variable=self._atk_mode_var, value="tap",
+                        command=self._on_attack_mode_change).pack(side="left", padx=2, pady=5)
+
         # ---- Repositioning ----
         repo_frame = tk.LabelFrame(self, text="Repositioning")
         repo_frame.pack(fill="x", padx=5, pady=5)
@@ -267,6 +273,9 @@ class MainTab(ttk.Frame):
         bg = self._mode_var.get() == "background"
         self.config.set("background_mode", bg)
         self.config.save()
+
+    def _on_attack_mode_change(self):
+        self._save_field("attack_mode", self._atk_mode_var.get())
 
     def _on_repose_toggle(self):
         self._save_bool("reposition_enabled", self._repose_var.get())

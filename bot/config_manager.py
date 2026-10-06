@@ -7,6 +7,7 @@ DEFAULT_CONFIG = {
     "background_mode": False,
     "attack_key": "f10",
     "attack_interval": 0.15,
+    "attack_mode": "hold",  # "hold" (key stays down) or "tap" (a short press each interval)
     "reposition_enabled": True,
     "calib_x": None,
     "minimap_x": 5,
