@@ -848,14 +848,18 @@ class BotEngine:
                         self.timed._focus_game()
                     # Held down rather than tapped - some attack skills need the
                     # key to stay physically down to keep hitting/channeling.
-                    # Only actually sends a key-down once (the first tick this
-                    # fires after being released elsewhere); after that the key
-                    # is already held, so later ticks just refresh bookkeeping.
+                    # A synthetic key-down is a one-shot event, not a simulated
+                    # physically-held key, so Windows never generates the
+                    # repeated WM_KEYDOWN messages a real hold produces - and
+                    # some games key their attack off that repeat signal, not
+                    # just raw key state. So key-down is re-sent every tick
+                    # while attacking (never interleaved with a key-up, so it
+                    # still reads as one continuous hold) instead of once.
                     attack_key = cfg["attack_key"]
                     if self._attack_held_key != attack_key:
                         self._release_attack_key()
-                        self.inp.key_down(attack_key)
                         self._attack_held_key = attack_key
+                    self.inp.key_down(attack_key)
                     self._last_attack = time.time()
                     self.status.state = "Attacking"
 
